@@ -1,0 +1,66 @@
+# Cursor Rules for Casewise Project
+
+## Project Patterns
+1. **Directory Structure**
+   - Follow established directory hierarchy
+   - Maintain clear separation of concerns
+   - Keep related files together
+
+2. **File Organization**
+   - Use meaningful file names
+   - Group related files
+   - Maintain consistent structure
+
+3. **Code Style**
+   - Follow PEP 8 guidelines
+   - Use clear variable names
+   - Write comprehensive comments
+
+## Development Workflow
+1. **Code Changes**
+   - Make incremental changes
+   - Test thoroughly
+   - Document updates
+
+2. **Documentation**
+   - Keep memory bank updated
+   - Document all changes
+   - Maintain clear records
+
+3. **Testing**
+   - Write unit tests
+   - Perform integration testing
+   - Validate changes
+
+## Project Intelligence
+1. **Key Patterns**
+   - Modular design
+   - File-based storage
+   - Comprehensive logging
+
+2. **Common Operations**
+   - Case processing
+   - Speech handling
+   - Image management
+   - Report generation
+
+3. **Known Challenges**
+   - Data validation
+   - Error handling
+   - Performance optimization
+
+## User Preferences
+1. **Development**
+   - Python-based implementation
+   - Clear documentation
+   - Comprehensive testing
+
+2. **Documentation**
+   - Markdown format
+   - Clear structure
+   - Regular updates
+
+3. **Project Management**
+   - Incremental development
+   - Regular updates
+   - Clear communication 

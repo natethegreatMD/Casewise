@@ -1,0 +1,21 @@
+{
+  "rubric_id": "abr_neurorad_v1",
+  "criteria": [
+    {
+      "label": "Anatomical identification",
+      "description": "Correct recognition of relevant anatomy",
+      "score_range": [0, 1, 2]
+    },
+    {
+      "label": "Diagnosis accuracy",
+      "description": "Correct differential and final diagnosis",
+      "score_range": [0, 1, 2, 3]
+    },
+    {
+      "label": "Clinical reasoning",
+      "description": "Appropriateness of logic and explanation",
+      "score_range": [0, 1, 2]
+    }
+  ],
+  "total_score_max": 7
+} 

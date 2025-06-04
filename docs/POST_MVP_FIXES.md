@@ -1,0 +1,8 @@
+- Add UUID to `case.json`
+- is_test_case support
+- Multiple session tracking
+- Prompt A/B dashboard
+- Web-based case review interface
+- Automated pipeline orchestration (`casewise.py`)
+- Long-term storage strategy for image previews
+- Collaborative tagging or review
