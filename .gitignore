@@ -192,3 +192,23 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Casewise-specific ignores
+
+# Raw DICOMs and auto-generated PNGs
+data/images/
+data/converted/
+
+# Log files and interaction history
+logs/
+*.log
+
+# Case audio input and transcript output
+speech_input/audio_uploads/
+speech_input/transcripts/
+
+# Secret keys
+.env
+
+# Memory bank (optional, depends on if you commit it)
+memory-bank/
