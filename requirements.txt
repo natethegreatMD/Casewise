@@ -1,0 +1,4 @@
+pydicom
+Pillow
+openai
+python-dotenv
