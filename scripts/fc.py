@@ -42,6 +42,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich.prompt import Prompt, Confirm
 import zipfile
 import io
+import aiohttp
+import asyncio
 
 # Constants
 TCIA_API_BASE = "https://services.cancerimagingarchive.net/services/v4/TCIA"
@@ -51,9 +53,15 @@ CACHE_DIR = Path(__file__).parent.parent / "cache" / "studies"
 SIZE_WARNING_THRESHOLD_GB = 80  # Warning threshold for collection size
 API_RATE_LIMIT_DELAY = 0.2  # Delay between API calls in seconds
 REQUEST_TIMEOUT = 450  # Increased timeout for all collections
-PAGE_SIZE = 100  # Increased page size for faster fetching
+MIN_PAGE_SIZE = 50  # Minimum page size for small collections
+MAX_PAGE_SIZE = 200  # Maximum page size for large collections
 MAX_RETRIES = 3  # Number of retries for failed requests
 RATE_LIMIT_DELAY = 1.0  # Delay between requests
+CACHE_CHUNK_SIZE = 1000  # Number of studies to cache before writing to disk
+EARLY_EXIT_THRESHOLD = 0.8  # Exit early if we have 80% of needed studies with reports
+MAX_CONCURRENT_DOWNLOADS = 5  # Maximum number of concurrent series downloads
+MAX_CONCURRENT_PATIENTS = 10  # Maximum number of concurrent patient processing
+MEMORY_THRESHOLD_MB = 1000  # Memory threshold in MB to trigger cleanup
 
 # Known large collections that need special handling
 LARGE_COLLECTIONS = {
@@ -241,15 +249,15 @@ def setup_logging(args: argparse.Namespace) -> logging.Logger:
 def ensure_data_dir() -> None:
     """Ensure the data directory exists."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    logger.debug(f"Ensured data directory exists at {DATA_DIR}")
+    print(f"Ensured data directory exists at {DATA_DIR}")  # Use print instead of logger for setup
 
 def ensure_cache_dir() -> None:
     """Ensure the cache directory exists."""
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        logger.debug(f"Ensured cache directory exists at {CACHE_DIR}")
+        print(f"Ensured cache directory exists at {CACHE_DIR}")  # Use print instead of logger for setup
     except Exception as e:
-        logger.error(f"Error creating cache directory: {e}")
+        print(f"Error creating cache directory: {e}")
         console.print(f"[red]Error creating cache directory: {e}[/red]")
         raise
 
@@ -299,24 +307,51 @@ def get_cached_studies(collection: str) -> Tuple[List[Dict], Set[str]]:
         logger.error(f"Error loading cache for {collection}: {e}")
         return [], set()
 
-def save_study_to_cache(collection: str, study: Dict, seen_uids: Set[str]) -> None:
-    """Save a single study to cache and update seen UIDs."""
-    cache_file = CACHE_DIR / f"{collection}.jsonl"
-    uids_file = CACHE_DIR / f"{collection}.uids.json"
+def get_dynamic_page_size(total_studies: Optional[int]) -> int:
+    """Calculate optimal page size based on collection size."""
+    if total_studies is None:
+        return MIN_PAGE_SIZE
     
-    try:
-        # Save study
-        with open(cache_file, 'a') as f:
-            f.write(json.dumps(study) + "\n")
+    if total_studies <= 100:
+        return MIN_PAGE_SIZE
+    elif total_studies <= 1000:
+        return 100
+    else:
+        return MAX_PAGE_SIZE
+
+def save_study_to_cache(collection: str, study: Dict, seen_uids: Set[str], cache_buffer: List[Dict]) -> None:
+    """Save a single study to cache buffer and update seen UIDs."""
+    study_uid = study.get("StudyInstanceUID")
+    if study_uid:
+        seen_uids.add(study_uid)
+        cache_buffer.append(study)
         
-        # Update and save UIDs
-        study_uid = study.get("StudyInstanceUID")
-        if study_uid:
-            seen_uids.add(study_uid)
-            with open(uids_file, 'w') as f:
-                json.dump(list(seen_uids), f)
+        # Write to disk if buffer is full
+        if len(cache_buffer) >= CACHE_CHUNK_SIZE:
+            flush_cache_buffer(collection, cache_buffer)
+            cache_buffer.clear()
+            
+            # Check memory usage after flushing
+            if check_memory_usage():
+                logger.info("Memory threshold reached after cache flush, waiting for cleanup...")
+                time.sleep(1)  # Give time for memory cleanup
+
+def flush_cache_buffer(collection: str, cache_buffer: List[Dict]) -> None:
+    """Write cached studies to disk."""
+    if not cache_buffer:
+        return
+        
+    cache_file = CACHE_DIR / f"{collection}.jsonl"
+    try:
+        with open(cache_file, 'a') as f:
+            for study in cache_buffer:
+                f.write(json.dumps(study) + "\n")
+                
+        # Force garbage collection after writing
+        import gc
+        gc.collect()
     except Exception as e:
-        logger.error(f"Error saving study to cache for {collection}: {e}")
+        logger.error(f"Error flushing cache buffer for {collection}: {e}")
 
 def finalize_cache(collection: str, studies: List[Dict], seen_uids: Set[str]) -> None:
     """Convert .jsonl cache to .json for finalized collections."""
@@ -336,42 +371,108 @@ def finalize_cache(collection: str, studies: List[Dict], seen_uids: Set[str]) ->
         # Remove JSONL file
         jsonl_file.unlink()
         
+        # Force garbage collection after finalizing
+        import gc
+        gc.collect()
+        
         logger.info(f"Finalized cache for {collection} with {len(studies)} studies and {len(seen_uids)} UIDs")
     except Exception as e:
         logger.error(f"Error finalizing cache for {collection}: {e}")
 
-def get_collections() -> List[Dict]:
-    """Fetch available collections from TCIA."""
+def get_collections_sync() -> List[Dict]:
+    # Keep the old sync version for CLI bootstrapping if needed
+    ...
+
+async def get_collections(session: aiohttp.ClientSession) -> List[Dict]:
     try:
-        logger.info("Fetching collections from TCIA")
-        logger.debug(f"API endpoint: {TCIA_API_BASE}/query/getCollectionValues")
-        
-        response = requests.get(f"{TCIA_API_BASE}/query/getCollectionValues", timeout=60)
-        response.raise_for_status()
-        
-        collections = response.json()
-        logger.info(f"Successfully retrieved {len(collections)} collections")
-        logger.debug(f"Collection names: {[c.get('Collection', 'N/A') for c in collections]}")
-        return collections
-        
-    except KeyboardInterrupt:
-        logger.info("User cancelled collection fetch")
-        console.print("\n[yellow]User cancelled. Exiting.[/yellow]")
-        sys.exit(0)
-    except requests.Timeout:
-        logger.error("Request timed out while fetching collections")
-        console.print("[red]Request timed out while fetching collections.[/red]")
-        sys.exit(1)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching collections: {str(e)}")
-        logger.debug(f"Request failed with status code: {getattr(e.response, 'status_code', 'N/A')}")
-        logger.debug(f"Response content: {getattr(e.response, 'content', 'N/A')}")
-        console.print(f"[red]Error fetching collections: {e}[/red]")
-        sys.exit(1)
+        logger.info("Fetching collections from TCIA (async)")
+        url = f"{TCIA_API_BASE}/query/getCollectionValues"
+        async with session.get(url, timeout=60) as response:
+            response.raise_for_status()
+            collections = await response.json()
+            logger.info(f"Successfully retrieved {len(collections)} collections")
+            logger.debug(f"Collection names: {[c.get('Collection', 'N/A') for c in collections]}")
+            return collections
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching collections: {e}")
+        return []
     except Exception as e:
-        logger.error(f"Unhandled error while fetching collections: {str(e)}")
-        console.print(f"[red]Unexpected error: {e}[/red]")
-        sys.exit(1)
+        logger.error(f"Unhandled error while fetching collections: {e}")
+        return []
+
+async def get_patients(session: aiohttp.ClientSession, collection: str) -> List[Dict]:
+    try:
+        logger.info(f"Fetching patients for collection: {collection} (async)")
+        url = f"{TCIA_API_BASE}/query/getPatient"
+        params = {"Collection": collection}
+        async with session.get(url, params=params, timeout=60) as response:
+            response.raise_for_status()
+            patients = await response.json()
+            logger.debug(f"Retrieved {len(patients)} patients for collection {collection}")
+            return patients
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching patients for collection {collection}: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unhandled error while fetching patients: {e}")
+        return []
+
+async def get_series(session: aiohttp.ClientSession, patient_id: str, collection: str) -> List[Dict]:
+    try:
+        logger.info(f"Fetching series for patient {patient_id} in collection {collection} (async)")
+        url = f"{TCIA_API_BASE}/query/getSeries"
+        params = {"PatientID": patient_id, "Collection": collection}
+        async with session.get(url, params=params, timeout=60) as response:
+            response.raise_for_status()
+            series = await response.json()
+            logger.debug(f"Retrieved {len(series)} series for patient {patient_id}")
+            return series
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching series for patient {patient_id}: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unhandled error while fetching series: {e}")
+        return []
+
+async def get_series_for_study(session: aiohttp.ClientSession, collection: str, patient_id: str, study_uid: str) -> List[Dict]:
+    try:
+        url = f"{TCIA_API_BASE}/query/getSeries"
+        params = {"Collection": collection, "PatientID": patient_id, "StudyInstanceUID": study_uid}
+        logger.info(f"Fetching series for study {study_uid} (Patient: {patient_id}) (async)")
+        async with session.get(url, params=params, timeout=60) as response:
+            response.raise_for_status()
+            series = await response.json()
+            logger.info(f"Found {len(series)} series in study {study_uid}")
+            logger.debug(f"Series modalities: {[s.get('Modality', 'N/A') for s in series]}")
+            logger.debug(f"Series descriptions: {[s.get('SeriesDescription', 'N/A') for s in series]}")
+            return series
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching series for study {study_uid}: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unhandled error while fetching series: {e}")
+        return []
+
+async def get_study_by_uid(session: aiohttp.ClientSession, collection: str, study_uid: str) -> Optional[Dict]:
+    try:
+        url = f"{TCIA_API_BASE}/query/getPatientStudy"
+        params = {"Collection": collection, "StudyInstanceUID": study_uid}
+        logger.info(f"Fetching study {study_uid} from collection {collection} (async)")
+        async with session.get(url, params=params, timeout=60) as response:
+            response.raise_for_status()
+            studies = await response.json()
+            if not studies:
+                logger.error(f"Study {study_uid} not found in collection {collection}")
+                return None
+            study = studies[0]
+            logger.info(f"Found study {study_uid} for patient {study.get('PatientID')}")
+            return study
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching study {study_uid}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unhandled error while fetching study: {e}")
+        return None
 
 def filter_collections_by_subspecialty(collections: List[Dict], subspecialty: Optional[str] = None) -> List[Dict]:
     """Filter collections based on selected subspecialty."""
@@ -414,179 +515,6 @@ def filter_collections_by_subspecialty(collections: List[Dict], subspecialty: Op
         )
     
     return filtered
-
-def get_patients(collection: str) -> List[Dict]:
-    """Fetch patients for a given collection."""
-    try:
-        logger.info(f"Fetching patients for collection: {collection}")
-        response = requests.get(
-            f"{TCIA_API_BASE}/query/getPatient",
-            params={"Collection": collection},
-            timeout=60
-        )
-        response.raise_for_status()
-        patients = response.json()
-        logger.debug(f"Retrieved {len(patients)} patients for collection {collection}")
-        return patients
-    except KeyboardInterrupt:
-        logger.info("User cancelled patient fetch")
-        console.print("\n[yellow]User cancelled. Exiting.[/yellow]")
-        sys.exit(0)
-    except requests.Timeout:
-        logger.error("Request timed out while fetching patients")
-        console.print("[red]Request timed out while fetching patients.[/red]")
-        sys.exit(1)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching patients for collection {collection}: {e}")
-        console.print(f"[red]Error fetching patients: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unhandled error while fetching patients: {str(e)}")
-        console.print(f"[red]Unexpected error: {e}[/red]")
-        sys.exit(1)
-
-def get_series(patient_id: str, collection: str) -> List[Dict]:
-    """Fetch series for a given patient and collection."""
-    try:
-        logger.info(f"Fetching series for patient {patient_id} in collection {collection}")
-        response = requests.get(
-            f"{TCIA_API_BASE}/query/getSeries",
-            params={
-                "PatientID": patient_id,
-                "Collection": collection
-            },
-            timeout=60
-        )
-        response.raise_for_status()
-        series = response.json()
-        logger.debug(f"Retrieved {len(series)} series for patient {patient_id}")
-        return series
-    except KeyboardInterrupt:
-        logger.info("User cancelled series fetch")
-        console.print("\n[yellow]User cancelled. Exiting.[/yellow]")
-        sys.exit(0)
-    except requests.Timeout:
-        logger.error("Request timed out while fetching series")
-        console.print("[red]Request timed out while fetching series.[/red]")
-        sys.exit(1)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching series for patient {patient_id}: {e}")
-        console.print(f"[red]Error fetching series: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unhandled error while fetching series: {str(e)}")
-        console.print(f"[red]Unexpected error: {e}[/red]")
-        sys.exit(1)
-
-def get_series_for_study(collection: str, patient_id: str, study_uid: str) -> List[Dict]:
-    """Fetch all series for a specific study."""
-    try:
-        url = f"{TCIA_API_BASE}/query/getSeries"
-        params = {
-            "Collection": collection,
-            "PatientID": patient_id,
-            "StudyInstanceUID": study_uid
-        }
-        
-        logger.info(f"Fetching series for study {study_uid} (Patient: {patient_id})")
-        logger.debug(f"API endpoint: {url}")
-        logger.debug(f"Request parameters: {params}")
-        
-        response = requests.get(url, params=params, timeout=60)
-        response.raise_for_status()
-        
-        series = response.json()
-        logger.info(f"Found {len(series)} series in study {study_uid}")
-        logger.debug(f"Series modalities: {[s.get('Modality', 'N/A') for s in series]}")
-        logger.debug(f"Series descriptions: {[s.get('SeriesDescription', 'N/A') for s in series]}")
-        
-        return series
-        
-    except KeyboardInterrupt:
-        logger.info("User cancelled series fetch")
-        console.print("\n[yellow]User cancelled. Exiting.[/yellow]")
-        sys.exit(0)
-    except requests.Timeout:
-        logger.error("Request timed out while fetching series")
-        console.print("[red]Request timed out while fetching series.[/red]")
-        return []
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching series for study {study_uid}: {str(e)}")
-        logger.debug(f"Request failed with status code: {getattr(e.response, 'status_code', 'N/A')}")
-        logger.debug(f"Response content: {getattr(e.response, 'content', 'N/A')}")
-        return []
-    except Exception as e:
-        logger.error(f"Unhandled error while fetching series: {str(e)}")
-        console.print(f"[red]Unexpected error: {e}[/red]")
-        return []
-
-def has_report_series(series_list: List[Dict]) -> bool:
-    """Check if any series in the list appears to be a report.
-    
-    A study is considered to have a report if any of its series meets either condition:
-    1. Modality is "SR" (Structured Report)
-    2. SeriesDescription contains any report-related keyword (case-insensitive)
-    """
-    logger.info("Checking for report series")
-    logger.debug(f"Total series to check: {len(series_list)}")
-    
-    # Check each series for report indicators
-    for series in series_list:
-        modality = series.get("Modality", "").upper()
-        description = series.get("SeriesDescription", "").lower()
-        
-        logger.debug(f"Checking series - Modality: {modality}, Description: {description}")
-        
-        # Check for SR modality
-        if modality == "SR":
-            logger.info(f"Found report series with SR modality: {series.get('SeriesDescription')}")
-            logger.debug("Matching condition: Modality == 'SR'")
-            return True
-        
-        # Check description for keywords
-        if any(keyword in description for keyword in REPORT_KEYWORDS):
-            logger.info(f"Found report series with matching description: {series.get('SeriesDescription')}")
-            logger.debug(f"Matching keywords: {[k for k in REPORT_KEYWORDS if k in description]}")
-            return True
-    
-    logger.info("No report series found")
-    return False
-
-def filter_studies_with_reports(collection: str, studies: List[Dict]) -> List[Dict]:
-    """Filter studies to only include those that have report series."""
-    logger.info(f"Filtering {len(studies)} studies for report content")
-    filtered_studies = []
-    excluded_studies = []
-    
-    for study in studies:
-        patient_id = study.get("PatientID")
-        study_uid = study.get("StudyInstanceUID")
-        study_date = study.get("StudyDate", "N/A")
-        
-        if not patient_id or not study_uid:
-            logger.warning(f"Skipping study with missing PatientID or StudyInstanceUID: {study}")
-            continue
-        
-        # Fetch series for this study
-        series_list = get_series_for_study(collection, patient_id, study_uid)
-        
-        if has_report_series(series_list):
-            filtered_studies.append(study)
-            logger.info(f"Including study {study_uid} from {study_date} (has report)")
-            logger.debug(f"Study details: {json.dumps(study, indent=2)}")
-        else:
-            excluded_studies.append(study)
-            logger.info(f"Excluding study {study_uid} from {study_date} (no report)")
-            logger.debug(f"Study details: {json.dumps(study, indent=2)}")
-        
-        # Rate limiting
-        time.sleep(API_RATE_LIMIT_DELAY)
-    
-    logger.info(f"Filtered {len(studies)} studies: {len(filtered_studies)} included, {len(excluded_studies)} excluded")
-    if excluded_studies:
-        logger.debug(f"Excluded studies: {[s.get('StudyInstanceUID') for s in excluded_studies]}")
-    
-    return filtered_studies
 
 def display_studies(studies: List[Dict], page_index: int = 0, page_size: int = 10) -> None:
     """Display available studies in a table with pagination."""
@@ -727,17 +655,90 @@ def show_live_timer(stop_event: threading.Event) -> None:
         stop_event.set()  # Ensure we stop if interrupted
         raise  # Re-raise to be caught by main handler
 
-def get_studies_for_collection(collection: str, limit: Optional[int] = None, refresh_cache: bool = False, resume_cache: bool = False, fetch_attempt: int = 1) -> List[Dict]:
-    """Fetch studies for a collection, sorted by date."""
-    MAX_FETCH_ATTEMPTS = 5  # Maximum number of attempts to find studies with reports
+async def get_patient_series(session: aiohttp.ClientSession, collection: str, patient_id: str) -> List[Dict]:
+    """Fetch all series for a patient asynchronously using the shared session."""
+    url = f"{TCIA_API_BASE}/query/getSeries?Collection={collection}&PatientID={patient_id}"
+    async with session.get(url) as response:
+        if response.status == 200:
+            return await response.json()
+        else:
+            logging.error(f"Failed to fetch series for patient {patient_id}: {response.status}")
+            return []
+
+async def filter_patients_with_reports(session: aiohttp.ClientSession, collection: str, patient_studies: Dict[str, List[Dict]]) -> List[Dict]:
+    """Filter patients to include only those with reports, using async fetching and shared session."""
+    valid_patients = []
+    tasks = []
+    for patient_id, studies in patient_studies.items():
+        tasks.append(get_patient_series(session, collection, patient_id))
+    series_results = await asyncio.gather(*tasks)
+    for patient_id, series_list in zip(patient_studies.keys(), series_results):
+        if has_report_series(series_list):
+            valid_patients.append(patient_id)
+    return valid_patients
+
+async def check_collection_has_reports(session: aiohttp.ClientSession, collection: str, logger, sample_size: int = 10) -> bool:
+    """Quickly check if a collection is likely to have reports by sampling series directly.
+    Uses /getSeries with Collection and limit to avoid fetching all patients.
+    """
+    try:
+        logger.info(f"Checking if collection {collection} has reports (sampling {sample_size} series)")
+        url = f"{TCIA_API_BASE}/query/getSeries"
+        params = {"Collection": collection, "limit": sample_size}
+        
+        start_time = time.time()
+        print(f"Checking reports for {collection}...", end="", flush=True)
+        
+        # Start a background task to update the timer
+        async def update_timer():
+            while True:
+                elapsed_time = time.time() - start_time
+                print(f"\rChecking reports for {collection}... {elapsed_time:.2f} seconds", end="", flush=True)
+                await asyncio.sleep(0.1)
+        
+        timer_task = asyncio.create_task(update_timer())
+        
+        async with session.get(url, params=params, timeout=60) as response:
+            response.raise_for_status()
+            series_list = await response.json()
+        
+        # Cancel the timer task
+        timer_task.cancel()
+        try:
+            await timer_task
+        except asyncio.CancelledError:
+            pass
+        
+        elapsed_time = time.time() - start_time
+        print(f"\rChecking reports for {collection}... completed in {elapsed_time:.2f} seconds")
+        console.print("")
+        
+        if not series_list:
+            logger.warning(f"No series found in collection {collection}")
+            return False
+        # Check if any series contains reports
+        if has_report_series(series_list):
+            logger.info(f"Found reports in collection {collection}")
+            return True
+        logger.warning(f"No reports found in sample from collection {collection}")
+        return False
+    except Exception as e:
+        logger.error(f"Error checking collection {collection} for reports: {e}")
+        return False
+
+async def get_studies_for_collection(session: aiohttp.ClientSession, collection: str, limit: Optional[int] = None, refresh_cache: bool = False, resume_cache: bool = False, fetch_attempt: int = 1, logger=None) -> List[Dict]:
+    """Fetch studies for a collection with async support and optimizations."""
+    MAX_FETCH_ATTEMPTS = 5
     
     if fetch_attempt > MAX_FETCH_ATTEMPTS:
         logger.warning(f"Reached maximum fetch attempts ({MAX_FETCH_ATTEMPTS})")
         return []
-        
-    cache_file = CACHE_DIR / f"{collection}.jsonl"
-    uids_file = CACHE_DIR / f"{collection}.uids.json"
-    FINALIZE_THRESHOLD = 1000  # Convert to .json after this many studies
+    
+    # First check if the collection is likely to have reports
+    if not await check_collection_has_reports(session, collection, logger):
+        logger.warning(f"Collection {collection} appears to have no reports, skipping")
+        console.print(f"\n[yellow]Collection {collection} appears to have no reports. Skipping...[/yellow]")
+        return []  # Return to main menu instead of exiting
     
     # Load existing cache if available
     all_studies, seen_uids = get_cached_studies(collection)
@@ -748,16 +749,16 @@ def get_studies_for_collection(collection: str, limit: Optional[int] = None, ref
     if refresh_cache or not all_studies:
         stop_event = threading.Event()
         timer_thread = None
+        cache_buffer = []
+        
         try:
             url = f"{TCIA_API_BASE}/query/getPatientStudy"
             base_params = {
                 "Collection": collection,
-                "format": "json"  # Explicitly request JSON format
+                "format": "json"
             }
             
             logger.info(f"Fetching cases for collection: {collection}")
-            logger.debug(f"API endpoint: {url}")
-            logger.debug(f"Base parameters: {base_params}")
             
             # Start live timer
             timer_thread = threading.Thread(target=show_live_timer, args=(stop_event,))
@@ -767,121 +768,100 @@ def get_studies_for_collection(collection: str, limit: Optional[int] = None, ref
             
             # Clear existing cache if refreshing
             if refresh_cache:
+                cache_file = CACHE_DIR / f"{collection}.jsonl"
+                uids_file = CACHE_DIR / f"{collection}.uids.json"
                 if cache_file.exists():
                     cache_file.unlink()
-                    logger.info("Cleared existing cache file")
                 if uids_file.exists():
                     uids_file.unlink()
-                    logger.info("Cleared existing UIDs file")
                 all_studies = []
                 seen_uids = set()
             
-            # First, get total count if available
+            # Get total count and calculate optimal page size
             try:
-                with requests.Session() as session:
-                    count_params = {**base_params, "limit": 1}
-                    logger.debug(f"Count request parameters: {count_params}")
-                    count_response = session.get(
-                        url,
-                        params=count_params,
-                        timeout=REQUEST_TIMEOUT,
-                        headers={
-                            'Accept': 'application/json',
-                            'User-Agent': 'TCIA-Case-Fetcher/1.0'
-                        }
-                    )
-                    count_response.raise_for_status()
-                    try:
-                        count_data = count_response.json()
-                        total_studies = len(count_data)
-                        logger.info(f"Total studies in collection: {total_studies}")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Invalid JSON in count response: {e}")
-                        raise
+                async with session.get(url, params={**base_params, "limit": 1}, timeout=REQUEST_TIMEOUT) as response:
+                    response.raise_for_status()
+                    count_data = await response.json()
+                    total_studies = len(count_data)
+                    logger.info(f"Total studies in collection: {total_studies}")
             except Exception as e:
                 logger.warning(f"Could not get total study count: {e}")
                 total_studies = None
             
-            # Calculate how many studies we need to fetch
+            # Calculate optimal page size and studies to fetch
+            page_size = get_dynamic_page_size(total_studies)
             studies_to_fetch = limit if limit is not None else total_studies
             if studies_to_fetch is None:
-                studies_to_fetch = 100  # Default to 100 if we can't get total count
+                studies_to_fetch = 100
             
             # Fetch studies page by page
             page = 0
-            while len(all_studies) < studies_to_fetch:
-                params = {
-                    **base_params,
-                    "offset": page * PAGE_SIZE,
-                    "limit": PAGE_SIZE
-                }
-                logger.info(f"Fetching page {page + 1} with {PAGE_SIZE} studies")
-                logger.debug(f"Request parameters: {params}")
+            studies_with_reports = 0
+            target_reports = limit if limit is not None else studies_to_fetch
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                console=console
+            ) as progress:
+                task = progress.add_task(
+                    f"Fetching studies...",
+                    total=studies_to_fetch
+                )
                 
-                # Retry logic for each page
-                for retry in range(MAX_RETRIES):
-                    try:
-                        with requests.Session() as session:
-                            response = session.get(
-                                url,
-                                params=params,
-                                timeout=REQUEST_TIMEOUT,
-                                headers={
-                                    'Accept': 'application/json',
-                                    'User-Agent': 'TCIA-Case-Fetcher/1.0'
-                                }
-                            )
-                            response.raise_for_status()
-                            
-                            try:
-                                new_studies = response.json()
-                                if not isinstance(new_studies, list):
-                                    raise ValueError(f"Expected list, got {type(new_studies)}")
-                                logger.debug(f"Page {page + 1} received {len(new_studies)} studies")
-                            except json.JSONDecodeError as e:
-                                logger.error(f"Invalid JSON response: {e}")
+                while len(all_studies) < studies_to_fetch:
+                    params = {
+                        **base_params,
+                        "offset": page * page_size,
+                        "limit": page_size
+                    }
+                    
+                    # Retry logic for each page
+                    for retry in range(MAX_RETRIES):
+                        try:
+                            async with session.get(url, params=params, timeout=REQUEST_TIMEOUT) as response:
+                                response.raise_for_status()
+                                new_studies = await response.json()
+                                break
+                        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                            if retry < MAX_RETRIES - 1:
+                                wait_time = (retry + 1) * 5
+                                logger.warning(f"Request failed: {e}, retrying in {wait_time}s")
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
                                 raise
-                            
-                            break
-                    except requests.Timeout:
-                        if retry < MAX_RETRIES - 1:
-                            wait_time = (retry + 1) * 5
-                            logger.warning(f"Request timed out, retrying in {wait_time}s (attempt {retry + 1}/{MAX_RETRIES})")
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            raise
-                    except requests.exceptions.RequestException as e:
-                        if retry < MAX_RETRIES - 1:
-                            wait_time = (retry + 1) * 5
-                            logger.warning(f"Request failed: {e}, retrying in {wait_time}s (attempt {retry + 1}/{MAX_RETRIES})")
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            raise
-                
-                if not new_studies:  # No more studies to fetch
-                    break
-                
-                # Process studies in chunks
-                chunk_size = 10
-                for i in range(0, len(new_studies), chunk_size):
-                    chunk = new_studies[i:i + chunk_size]
-                    for study in chunk:
+                    
+                    if not new_studies:
+                        break
+                    
+                    # Process studies in chunks
+                    for study in new_studies:
                         study_uid = study.get("StudyInstanceUID")
                         if study_uid and study_uid not in seen_uids:
                             all_studies.append(study)
-                            save_study_to_cache(collection, study, seen_uids)
-                
-                # Show progress
-                if total_studies:
-                    progress = f"Processed {len(all_studies)}/{studies_to_fetch} studies"
-                else:
-                    progress = f"Processed {len(all_studies)} studies"
-                logger.info(f"Processed page {page + 1} ({len(new_studies)} studies) - {progress}")
-                
-                page += 1
-                time.sleep(RATE_LIMIT_DELAY)  # Rate limiting between pages
+                            save_study_to_cache(collection, study, seen_uids, cache_buffer)
+                            progress.update(task, advance=1)
+                    
+                    # Group and check for reports periodically
+                    if len(all_studies) % (page_size * 2) == 0:
+                        patient_studies = group_studies_by_patient(all_studies)
+                        valid_patients = await filter_patients_with_reports_batch(session, collection, patient_studies)
+                        studies_with_reports = len(valid_patients)
+                        
+                        # Early exit if we have enough studies with reports
+                        if limit is not None and studies_with_reports >= int(limit * EARLY_EXIT_THRESHOLD):
+                            logger.info(f"Early exit: Found {studies_with_reports} studies with reports (threshold: {int(limit * EARLY_EXIT_THRESHOLD)})")
+                            break
+                    
+                    page += 1
+                    await asyncio.sleep(RATE_LIMIT_DELAY)
+            
+            # Flush any remaining studies in cache buffer
+            flush_cache_buffer(collection, cache_buffer)
             
             # Stop timer and show completion
             stop_event.set()
@@ -891,39 +871,35 @@ def get_studies_for_collection(collection: str, limit: Optional[int] = None, ref
             
             # Sort by study date
             all_studies.sort(key=lambda s: s.get("StudyDate", ""), reverse=True)
-            logger.info(f"Sorted {len(all_studies)} studies by date")
             
             # Group studies by patient and filter for reports
             patient_studies = group_studies_by_patient(all_studies)
-            logger.info(f"Grouped {len(all_studies)} studies into {len(patient_studies)} patients")
+            valid_patients = await filter_patients_with_reports_batch(session, collection, patient_studies)
             
-            # Filter patients to only include those with reports
-            filtered_studies = filter_patients_with_reports(collection, patient_studies)
-            
-            if not filtered_studies:
+            if not valid_patients:
                 logger.warning(f"No cases with reports found in collection")
                 console.print(f"\n[yellow]No studies with reports were found in this collection.[/yellow]")
-                return []
+                return []  # Return to main menu instead of exiting
             
             # If we don't have enough studies with reports, fetch more
-            if limit is not None and len(filtered_studies) < limit:
-                logger.info(f"Only found {len(filtered_studies)} studies with reports, need {limit} (attempt {fetch_attempt}/{MAX_FETCH_ATTEMPTS})")
-                # Recursively fetch more studies
-                more_studies = get_studies_for_collection(
+            if limit is not None and len(valid_patients) < limit:
+                logger.info(f"Only found {len(valid_patients)} studies with reports, need {limit}")
+                more_studies = await get_studies_for_collection(
+                    session,
                     collection,
-                    limit=limit - len(filtered_studies),
+                    limit=limit - len(valid_patients),
                     refresh_cache=False,
                     resume_cache=True,
                     fetch_attempt=fetch_attempt + 1
                 )
-                filtered_studies.extend(more_studies)
+                valid_patients.extend(more_studies)
             
             # Apply final limit
             if limit is not None:
-                filtered_studies = filtered_studies[:limit]
+                valid_patients = valid_patients[:limit]
             
-            logger.info(f"Found {len(filtered_studies)} cases with reports (of {len(all_studies)} processed studies)")
-            return filtered_studies
+            logger.info(f"Found {len(valid_patients)} cases with reports (of {len(all_studies)} processed studies)")
+            return valid_patients
             
         except KeyboardInterrupt:
             if 'stop_event' in locals():
@@ -935,85 +911,148 @@ def get_studies_for_collection(collection: str, limit: Optional[int] = None, ref
             else:
                 console.print("\n[yellow]User cancelled. No progress was saved.[/yellow]")
             sys.exit(0)
-        except requests.Timeout:
+        except Exception as e:
             if 'stop_event' in locals():
                 stop_event.set()
                 timer_thread.join()
-            logger.error("Request timed out while fetching studies")
-            if all_studies:
-                console.print("[red]Request timed out while fetching studies. Progress has been saved to cache.[/red]")
-            else:
-                console.print("[red]Request timed out while fetching studies. No progress was saved.[/red]")
-            return all_studies
-        except requests.exceptions.RequestException as e:
-            if 'stop_event' in locals():
-                stop_event.set()
-                timer_thread.join()
-            logger.error(f"Error fetching cases for collection {collection}: {str(e)}")
+            logger.error(f"Error fetching studies: {e}")
             if all_studies:
                 console.print(f"[red]Error fetching studies. Progress has been saved to cache.[/red]")
             else:
                 console.print(f"[red]Error fetching studies. No progress was saved.[/red]")
             return all_studies
-        except Exception as e:
-            if 'stop_event' in locals():
-                stop_event.set()
-                timer_thread.join()
-            logger.error(f"Unhandled error while fetching studies: {str(e)}")
-            if all_studies:
-                console.print(f"[red]Unexpected error. Progress has been saved to cache.[/red]")
-            else:
-                console.print(f"[red]Unexpected error. No progress was saved.[/red]")
-            return all_studies
 
-def download_series(series_uid: str, save_path: Path) -> bool:
-    """Download a series and save it to the specified path."""
+async def download_series_async(session: aiohttp.ClientSession, series_uid: str, save_path: Path, semaphore: asyncio.Semaphore) -> bool:
+    """Download a series asynchronously with rate limiting."""
+    async with semaphore:
+        try:
+            logger.info(f"Downloading series {series_uid}")
+            url = f"{TCIA_API_BASE}/query/getImage"
+            params = {"SeriesInstanceUID": series_uid}
+            async with session.get(url, params=params, timeout=REQUEST_TIMEOUT) as response:
+                if response.status != 200:
+                    logger.error(f"Failed to get download URL for series {series_uid}: {response.status}")
+                    return False
+                download_url = (await response.json())["url"]
+            # Download the ZIP file
+            async with session.get(download_url, timeout=300) as zip_response:
+                if zip_response.status != 200:
+                    logger.error(f"Failed to download ZIP for series {series_uid}: {zip_response.status}")
+                    return False
+                zip_content = await zip_response.read()
+            # Extract the ZIP file
+            with zipfile.ZipFile(io.BytesIO(zip_content)) as zip_ref:
+                file_list = zip_ref.namelist()
+                zip_ref.extractall(save_path)
+            logger.info(f"Successfully downloaded and extracted series {series_uid}")
+            return True
+        except Exception as e:
+            logger.error(f"Error downloading series {series_uid}: {str(e)}")
+            return False
+
+async def download_case_async(session: aiohttp.ClientSession, collection: str, study: Dict) -> bool:
+    """Handle the download process for a single case asynchronously."""
+    patient_id = study["PatientID"]
+    study_uid = study["StudyInstanceUID"]
+    # Fetch series
+    console.print(f"\n[bold blue]Fetching series for case: {study_uid}[/bold blue]")
+    series_list = await get_series_for_study(session, collection, patient_id, study_uid)
+    if not series_list:
+        logger.error(f"No series found for case {study_uid}")
+        console.print("[red]No series found for the selected case.[/red]")
+        return False
+    display_series(series_list)
+    # Download all series
+    save_base = DATA_DIR / collection / patient_id / study_uid
+    save_base.mkdir(parents=True, exist_ok=True)
+    # Create semaphore for rate limiting
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task(
+            f"Downloading series for case {study_uid}...",
+            total=len(series_list)
+        )
+        # Create download tasks
+        download_tasks = []
+        for series in series_list:
+            series_uid = series["SeriesInstanceUID"]
+            save_path = save_base / series_uid
+            save_path.mkdir(exist_ok=True)
+            download_tasks.append(download_series_async(session, series_uid, save_path, semaphore))
+        # Wait for all downloads to complete
+        results = await asyncio.gather(*download_tasks)
+        # Update progress
+        for success in results:
+            progress.update(task, advance=1)
+    # Display summary
+    success_count = sum(1 for r in results if r)
+    console.print("\n[bold green]Case download complete![\/bold green]")
+    console.print(f"Files have been saved to: {save_base}")
+    console.print(f"Successfully downloaded: {success_count}/{len(series_list)} series")
+    return success_count > 0
+
+def check_memory_usage() -> bool:
+    """Check if memory usage is above threshold."""
     try:
-        logger.info(f"Downloading series {series_uid}")
-        logger.debug(f"Save path: {save_path}")
+        import psutil
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        memory_mb = memory_info.rss / 1024 / 1024  # Convert to MB
         
-        # Get the series download URL
-        url = f"{TCIA_API_BASE}/query/getImage"
-        params = {"SeriesInstanceUID": series_uid}
-        logger.debug(f"Requesting download URL from: {url}")
-        logger.debug(f"Request parameters: {params}")
-        
-        response = requests.get(url, params=params, timeout=60)
-        response.raise_for_status()
-        
-        download_url = response.json()["url"]
-        logger.debug(f"Download URL received: {download_url}")
-        
-        # Download the ZIP file
-        logger.debug("Downloading ZIP file...")
-        zip_response = requests.get(download_url, timeout=300)  # Longer timeout for large downloads
-        zip_response.raise_for_status()
-        
-        # Extract the ZIP file
-        logger.debug("Extracting ZIP file...")
-        with zipfile.ZipFile(io.BytesIO(zip_response.content)) as zip_ref:
-            file_list = zip_ref.namelist()
-            logger.debug(f"ZIP contents: {file_list}")
-            zip_ref.extractall(save_path)
-        
-        logger.info(f"Successfully downloaded and extracted series {series_uid} to {save_path}")
-        logger.debug(f"Extracted {len(file_list)} files")
-        return True
-        
-    except KeyboardInterrupt:
-        logger.info("User cancelled series download")
-        console.print("\n[yellow]User cancelled. Exiting.[/yellow]")
-        sys.exit(0)
-    except requests.Timeout:
-        logger.error(f"Request timed out while downloading series {series_uid}")
-        console.print(f"[red]Request timed out while downloading series {series_uid}.[/red]")
+        if memory_mb > MEMORY_THRESHOLD_MB:
+            logger.warning(f"Memory usage ({memory_mb:.1f}MB) above threshold ({MEMORY_THRESHOLD_MB}MB)")
+            return True
         return False
-    except Exception as e:
-        logger.error(f"Error downloading series {series_uid}: {str(e)}")
-        logger.debug(f"Error type: {type(e).__name__}")
-        logger.debug(f"Error details: {str(e)}")
-        console.print(f"[red]Error downloading series {series_uid}: {e}[/red]")
+    except ImportError:
+        logger.warning("psutil not installed, memory monitoring disabled")
         return False
+
+async def process_patient_batch(session: aiohttp.ClientSession, collection: str, patient_batch: List[Tuple[str, List[Dict]]], semaphore: asyncio.Semaphore) -> List[str]:
+    """Process a batch of patients in parallel using the shared session."""
+    async with semaphore:
+        tasks = []
+        for patient_id, studies in patient_batch:
+            tasks.append(get_patient_series(session, collection, patient_id))
+        series_results = await asyncio.gather(*tasks)
+        valid_patients = []
+        for (patient_id, _), series_list in zip(patient_batch, series_results):
+            if has_report_series(series_list):
+                valid_patients.append(patient_id)
+        return valid_patients
+
+async def filter_patients_with_reports_batch(session: aiohttp.ClientSession, collection: str, patient_studies: Dict[str, List[Dict]]) -> List[Dict]:
+    """Filter patients to include only those with reports, using parallel processing and shared session."""
+    valid_patients = []
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_PATIENTS)
+    
+    # Convert to list of tuples for batch processing
+    patient_batches = []
+    current_batch = []
+    for patient_id, studies in patient_studies.items():
+        current_batch.append((patient_id, studies))
+        if len(current_batch) >= MAX_CONCURRENT_PATIENTS:
+            patient_batches.append(current_batch)
+            current_batch = []
+    if current_batch:
+        patient_batches.append(current_batch)
+    
+    # Process batches
+    for batch in patient_batches:
+        batch_results = await process_patient_batch(session, collection, batch, semaphore)
+        valid_patients.extend(batch_results)
+        
+        # Check memory usage
+        if check_memory_usage():
+            logger.info("Memory threshold reached, waiting for cleanup...")
+            await asyncio.sleep(1)  # Give time for memory cleanup
+    
+    return valid_patients
 
 def display_collections(collections: List[Dict]) -> None:
     """Display available collections in a table.
@@ -1179,49 +1218,6 @@ def download_case(collection: str, study: Dict) -> bool:
     
     return True
 
-def get_study_by_uid(collection: str, study_uid: str) -> Optional[Dict]:
-    """Fetch a specific study by its UID."""
-    try:
-        url = f"{TCIA_API_BASE}/query/getPatientStudy"
-        params = {
-            "Collection": collection,
-            "StudyInstanceUID": study_uid
-        }
-        
-        logger.info(f"Fetching study {study_uid} from collection {collection}")
-        logger.debug(f"API endpoint: {url}")
-        logger.debug(f"Request parameters: {params}")
-        
-        response = requests.get(url, params=params, timeout=60)
-        response.raise_for_status()
-        
-        studies = response.json()
-        if not studies:
-            logger.error(f"Study {study_uid} not found in collection {collection}")
-            return None
-        
-        study = studies[0]
-        logger.info(f"Found study {study_uid} for patient {study.get('PatientID')}")
-        return study
-        
-    except KeyboardInterrupt:
-        logger.info("User cancelled study fetch")
-        console.print("\n[yellow]User cancelled. Exiting.[/yellow]")
-        sys.exit(0)
-    except requests.Timeout:
-        logger.error("Request timed out while fetching study")
-        console.print("[red]Request timed out while fetching study.[/red]")
-        return None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching study {study_uid}: {str(e)}")
-        logger.debug(f"Request failed with status code: {getattr(e.response, 'status_code', 'N/A')}")
-        logger.debug(f"Response content: {getattr(e.response, 'content', 'N/A')}")
-        return None
-    except Exception as e:
-        logger.error(f"Unhandled error while fetching study: {str(e)}")
-        console.print(f"[red]Unexpected error: {e}[/red]")
-        return None
-
 def group_studies_by_patient(studies: List[Dict]) -> Dict[str, List[Dict]]:
     """Group studies by PatientID and sort by StudyDate within each group."""
     patient_studies = {}
@@ -1242,227 +1238,185 @@ def group_studies_by_patient(studies: List[Dict]) -> Dict[str, List[Dict]]:
     
     return patient_studies
 
-def get_patient_series(collection: str, patient_id: str) -> List[Dict]:
-    """Fetch all series for a patient in a collection."""
-    try:
-        logger.info(f"Fetching all series for patient {patient_id}")
-        response = requests.get(
-            f"{TCIA_API_BASE}/query/getSeries",
-            params={
-                "Collection": collection,
-                "PatientID": patient_id
-            },
-            timeout=REQUEST_TIMEOUT,
-            headers={
-                'Accept': 'application/json',
-                'User-Agent': 'TCIA-Case-Fetcher/1.0'
-            }
-        )
-        response.raise_for_status()
-        series = response.json()
-        logger.debug(f"Retrieved {len(series)} series for patient {patient_id}")
-        return series
-    except Exception as e:
-        logger.error(f"Error fetching series for patient {patient_id}: {e}")
-        return []
+def has_report_series(series_list: list) -> bool:
+    """Return True if any series in the list appears to be a report (by description or modality)."""
+    for series in series_list:
+        desc = (series.get("SeriesDescription") or "").lower()
+        modality = (series.get("Modality") or "").lower()
+        if any(keyword in desc for keyword in REPORT_KEYWORDS):
+            return True
+        if any(keyword in modality for keyword in REPORT_KEYWORDS):
+            return True
+    return False
 
-def filter_patients_with_reports(collection: str, patient_studies: Dict[str, List[Dict]]) -> List[Dict]:
-    """Filter patients to only include those with report series."""
-    logger.info(f"Filtering {len(patient_studies)} patients for report content")
-    valid_patients = []
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console
-    ) as progress:
-        task = progress.add_task(
-            "Checking patients for reports...",
-            total=len(patient_studies)
-        )
-        
-        for patient_id, studies in patient_studies.items():
-            # Get all series for this patient
-            series_list = get_patient_series(collection, patient_id)
-            
-            if has_report_series(series_list):
-                # Use the most recent study
-                valid_patients.append(studies[0])
-                logger.info(f"Including patient {patient_id} (has report)")
-            else:
-                logger.info(f"Excluding patient {patient_id} (no report)")
-            
-            progress.update(task, advance=1)
-            time.sleep(API_RATE_LIMIT_DELAY)
-    
-    logger.info(f"Filtered {len(patient_studies)} patients: {len(valid_patients)} included")
-    return valid_patients
-
-def main():
-    """Main function to run the TCIA case fetcher."""
-    # Parse command line arguments
+async def main():
+    """Main function with async support."""
     args = parse_args()
-    
-    # Setup logging
-    global logger
     logger = setup_logging(args)
-    
     logger.info("Starting TCIA case fetcher")
     logger.debug(f"Python version: {sys.version}")
     logger.debug(f"Working directory: {os.getcwd()}")
     logger.debug(f"Command line arguments: {args}")
     
+    # Ensure directories exist before proceeding
     ensure_data_dir()
     ensure_cache_dir()
     
-    # Handle direct study download
-    if args.study:
-        if not args.collection:
-            logger.error("--study requires --collection to be specified")
-            console.print("[red]Error: --study requires --collection to be specified[/red]")
-            sys.exit(1)
-        
-        console.print(f"\n[bold blue]Fetching study {args.study} from collection {args.collection}[/bold blue]")
-        study = get_study_by_uid(args.collection, args.study)
-        
-        if not study:
-            logger.error(f"Study {args.study} not found or invalid")
-            console.print(f"[red]Error: Study {args.study} not found or invalid[/red]")
-            sys.exit(1)
-        
-        if args.report_required:
-            series_list = get_series_for_study(args.collection, study["PatientID"], args.study)
-            if not has_report_series(series_list):
-                logger.warning(f"Study {args.study} has no report series")
-                console.print("[yellow]Study has no report series[/yellow]")
-                sys.exit(0)
-        
-        if args.download:
-            if download_case(args.collection, study):
-                logger.info("Study downloaded successfully")
-                sys.exit(0)
-            else:
-                logger.error("Failed to download study")
+    async with aiohttp.ClientSession() as session:
+        # Handle direct study download
+        if args.study:
+            if not args.collection:
+                logger.error("--study requires --collection to be specified")
+                console.print("[red]Error: --study requires --collection to be specified[/red]")
                 sys.exit(1)
-        else:
-            # Show series and prompt for download
-            series_list = get_series_for_study(args.collection, study["PatientID"], args.study)
-            display_series(series_list)
-            if Confirm.ask("Do you want to download this study?"):
-                if download_case(args.collection, study):
+            
+            console.print(f"\n[bold blue]Fetching study {args.study} from collection {args.collection}[/bold blue]")
+            study = await get_study_by_uid(session, args.collection, args.study)
+            
+            if not study:
+                logger.error(f"Study {args.study} not found or invalid")
+                console.print(f"[red]Error: Study {args.study} not found or invalid[/red]")
+                sys.exit(1)
+            
+            if args.report_required:
+                series_list = await get_series_for_study(session, args.collection, study["PatientID"], args.study)
+                if not has_report_series(series_list):
+                    logger.warning(f"Study {args.study} has no report series")
+                    console.print("[yellow]Study has no report series[/yellow]")
+                    sys.exit(0)
+            
+            if args.download:
+                if await download_case_async(session, args.collection, study):
                     logger.info("Study downloaded successfully")
                     sys.exit(0)
                 else:
                     logger.error("Failed to download study")
                     sys.exit(1)
             else:
-                logger.info("Download cancelled by user")
-                sys.exit(0)
-    
-    # Handle collection-only mode
-    if args.collection:
-        console.print(f"\n[bold blue]Fetching cases for collection: {args.collection}[/bold blue]")
-        studies = get_studies_for_collection(args.collection, args.limit, args.refresh_cache)
+                # Show series and prompt for download
+                series_list = await get_series_for_study(session, args.collection, study["PatientID"], args.study)
+                display_series(series_list)
+                if Confirm.ask("Do you want to download this study?"):
+                    if await download_case_async(session, args.collection, study):
+                        logger.info("Study downloaded successfully")
+                        sys.exit(0)
+                    else:
+                        logger.error("Failed to download study")
+                        sys.exit(1)
+                else:
+                    logger.info("Download cancelled by user")
+                    sys.exit(0)
         
-        if not studies:
-            logger.error(f"No cases found in collection {args.collection}")
-            console.print("[red]No cases found in the selected collection.[/red]")
-            sys.exit(1)
+        # Handle collection-only mode
+        if args.collection:
+            while True:
+                console.print(f"\n[bold blue]Fetching cases for collection: {args.collection}[/bold blue]")
+                studies = await get_studies_for_collection(session, args.collection, args.limit, args.refresh_cache, args.resume_cache, logger=logger)
+                
+                if not studies:
+                    logger.error(f"No cases found in collection {args.collection}")
+                    console.print("[red]No cases found in the selected collection.[/red]")
+                    # Prompt user to return to main menu or quit
+                    choice = Prompt.ask("No cases found. What would you like to do? (m=main menu, q=quit)", choices=["m", "q"], default="m")
+                    if choice == "m":
+                        # Clear the collection argument to enter interactive mode
+                        args.collection = None
+                        break  # Exit this loop and enter interactive mode
+                    else:
+                        sys.exit(0)
+                # Filter by subject if specified
+                if args.subject:
+                    studies = [s for s in studies if s.get("PatientID") == args.subject]
+                    if not studies:
+                        logger.error(f"Subject {args.subject} not found in collection {args.collection}")
+                        console.print(f"[red]Subject {args.subject} not found in collection {args.collection}[/red]")
+                        sys.exit(1)
+                
+                # Select study with pagination
+                selected_study = select_study(studies)
+                if not selected_study:
+                    logger.info("User cancelled study selection")
+                    console.print("\n[yellow]Operation cancelled by user.[/yellow]")
+                    sys.exit(0)
+                
+                if args.download:
+                    if await download_case_async(session, args.collection, selected_study):
+                        logger.info("Study downloaded successfully")
+                        sys.exit(0)
+                    else:
+                        logger.error("Failed to download study")
+                        sys.exit(1)
+                else:
+                    # Show series and prompt for download
+                    series_list = await get_series_for_study(session, args.collection, selected_study["PatientID"], selected_study["StudyInstanceUID"])
+                    display_series(series_list)
+                    if Confirm.ask("Do you want to download this study?"):
+                        if await download_case_async(session, args.collection, selected_study):
+                            logger.info("Study downloaded successfully")
+                            sys.exit(0)
+                        else:
+                            logger.error("Failed to download study")
+                            sys.exit(1)
+                    else:
+                        logger.info("Download cancelled by user")
+                        sys.exit(0)
+                break  # Only break if studies were found and handled
         
-        # Filter by subject if specified
-        if args.subject:
-            studies = [s for s in studies if s.get("PatientID") == args.subject]
+        # Interactive mode
+        while True:
+            # Select subspecialty
+            console.print("\n[bold blue]Select a subspecialty to filter collections:[/bold blue]")
+            selected_subspecialty = select_subspecialty()
+            if selected_subspecialty is None:
+                logger.info("User chose to exit program")
+                console.print("\n[yellow]Exiting program...[/yellow]")
+                break
+            
+            # Fetch and display collections
+            console.print("[bold blue]Fetching available collections...[/bold blue]")
+            collections = await get_collections(session)
+            filtered_collections = filter_collections_by_subspecialty(collections, selected_subspecialty)
+            
+            if not filtered_collections:
+                logger.warning(f"No collections found for subspecialty: {selected_subspecialty}")
+                console.print("[red]No collections found for the selected subspecialty.[/red]")
+                continue
+            
+            # Select collection
+            selected_collection = select_collection(filtered_collections)
+            if selected_collection is None:
+                continue
+            
+            collection_name = selected_collection["Collection"]
+            
+            # Fetch and display studies
+            console.print(f"\n[bold blue]Fetching cases for collection: {collection_name}[/bold blue]")
+            studies = await get_studies_for_collection(session, collection_name, args.limit, args.refresh_cache, args.resume_cache, logger=logger)
             if not studies:
-                logger.error(f"Subject {args.subject} not found in collection {args.collection}")
-                console.print(f"[red]Subject {args.subject} not found in collection {args.collection}[/red]")
-                sys.exit(1)
-        
-        # Select study with pagination
-        selected_study = select_study(studies)
-        if not selected_study:
-            logger.info("User cancelled study selection")
-            console.print("\n[yellow]Operation cancelled by user.[/yellow]")
-            sys.exit(0)
-        
-        if args.download:
-            if download_case(args.collection, selected_study):
-                logger.info("Study downloaded successfully")
-                sys.exit(0)
+                logger.error(f"No cases with reports found in collection {collection_name}")
+                console.print("[red]No cases with reports found in the selected collection.[/red]")
+                continue
+            
+            # Select study with pagination
+            selected_study = select_study(studies)
+            if not selected_study:
+                logger.info("User cancelled study selection")
+                console.print("\n[yellow]Returning to collection selection...[/yellow]")
+                continue
+            
+            # Download the case
+            if await download_case_async(session, collection_name, selected_study):
+                # Ask if user wants to download another case
+                if not Confirm.ask("\nDo you want to download another case?"):
+                    logger.info("User chose to exit after successful download")
+                    console.print("\n[yellow]Exiting program...[/yellow]")
+                    break
             else:
-                logger.error("Failed to download study")
-                sys.exit(1)
-        else:
-            # Show series and prompt for download
-            series_list = get_series_for_study(args.collection, selected_study["PatientID"], selected_study["StudyInstanceUID"])
-            display_series(series_list)
-            if Confirm.ask("Do you want to download this study?"):
-                if download_case(args.collection, selected_study):
-                    logger.info("Study downloaded successfully")
-                    sys.exit(0)
-                else:
-                    logger.error("Failed to download study")
-                    sys.exit(1)
-            else:
-                logger.info("Download cancelled by user")
-                sys.exit(0)
-    
-    # Interactive mode
-    while True:
-        # Select subspecialty
-        console.print("\n[bold blue]Select a subspecialty to filter collections:[/bold blue]")
-        selected_subspecialty = select_subspecialty()
-        if selected_subspecialty is None:
-            logger.info("User chose to exit program")
-            console.print("\n[yellow]Exiting program...[/yellow]")
-            break
-        
-        # Fetch and display collections
-        console.print("[bold blue]Fetching available collections...[/bold blue]")
-        collections = get_collections()
-        filtered_collections = filter_collections_by_subspecialty(collections, selected_subspecialty)
-        
-        if not filtered_collections:
-            logger.warning(f"No collections found for subspecialty: {selected_subspecialty}")
-            console.print("[red]No collections found for the selected subspecialty.[/red]")
-            continue
-        
-        # Select collection
-        selected_collection = select_collection(filtered_collections)
-        if selected_collection is None:
-            continue
-        
-        collection_name = selected_collection["Collection"]
-        
-        # Fetch and display studies
-        console.print(f"\n[bold blue]Fetching cases for collection: {collection_name}[/bold blue]")
-        studies = get_studies_for_collection(collection_name, args.limit, args.refresh_cache)
-        if not studies:
-            logger.error(f"No cases with reports found in collection {collection_name}")
-            console.print("[red]No cases with reports found in the selected collection.[/red]")
-            continue
-        
-        # Select study with pagination
-        selected_study = select_study(studies)
-        if not selected_study:
-            logger.info("User cancelled study selection")
-            console.print("\n[yellow]Returning to collection selection...[/yellow]")
-            continue
-        
-        # Download the case
-        if download_case(collection_name, selected_study):
-            # Ask if user wants to download another case
-            if not Confirm.ask("\nDo you want to download another case?"):
-                logger.info("User chose to exit after successful download")
-                console.print("\n[yellow]Exiting program...[/yellow]")
-                break
-        else:
-            # Ask if user wants to try another case
-            if not Confirm.ask("\nDo you want to try another case?"):
-                logger.info("User chose to exit after failed download")
-                console.print("\n[yellow]Exiting program...[/yellow]")
-                break
+                # Ask if user wants to try another case
+                if not Confirm.ask("\nDo you want to try another case?"):
+                    logger.info("User chose to exit after failed download")
+                    console.print("\n[yellow]Exiting program...[/yellow]")
+                    break
 
 if __name__ == "__main__":
-    main() 
+    asyncio.run(main()) 
