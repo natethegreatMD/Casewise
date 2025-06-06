@@ -7,3 +7,4 @@ rich
 python-dotenv
 requests
 questionary
+aiohttp==3.9.3

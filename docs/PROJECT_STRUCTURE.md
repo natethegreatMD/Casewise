@@ -8,7 +8,7 @@ casewise/
 ├── logs/
 ├── prompts/
 ├── docs/
-├── requirements.txt
+├── req.txt
 ├── config.json
 ├── .env
 ├── .gitignore
