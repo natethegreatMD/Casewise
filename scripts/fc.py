@@ -1059,17 +1059,30 @@ async def filter_patients_with_reports_batch(session: aiohttp.ClientSession, col
     return valid_patients
 
 def display_collections(collections: List[Dict], logger=None) -> None:
-    """Display available collections in a table."""
+    """Display available collections in a table, showing if they have reports."""
+    # Load scan_cache and build a lookup for has_reports
+    scan_cache = load_scan_cache()
+    has_reports_lookup = {}
+    for subspecialty, collections_dict in scan_cache.items():
+        for name, info in collections_dict.items():
+            has_reports_lookup[name.strip().lower()] = info.get("has_reports", False)
+
     if logger:
         logger.debug("Displaying collections table")
     table = Table(title="Available Collections")
     table.add_column("Index", style="cyan")
     table.add_column("Name", style="green")
+    table.add_column("Has Reports", style="magenta")
     table.add_column("Description", style="yellow")
     for idx, collection in enumerate(collections, 1):
+        name = collection.get("Collection", "N/A")
+        normalized_name = name.strip().lower()
+        has_reports = has_reports_lookup.get(normalized_name, False)
+        has_reports_str = "Yes" if has_reports else "No"
         table.add_row(
             str(idx),
-            collection.get("Collection", "N/A"),
+            name,
+            has_reports_str,
             "Description pending"  # TODO: Add GPT-generated descriptions
         )
     console.print(table)
@@ -1237,6 +1250,16 @@ def has_report_series(series_list: list) -> bool:
         if any(keyword in modality for keyword in REPORT_KEYWORDS):
             return True
     return False
+
+def load_scan_cache() -> Dict:
+    """Load the scan cache from JSON file."""
+    try:
+        with open("scan_cache.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        return {}
 
 async def main():
     """Main function with async support."""
