@@ -75,8 +75,15 @@ LARGE_COLLECTIONS = {
 REPORT_KEYWORDS = {
     "report",
     "rtstruct",
-    "sc",  # Secondary Capture
     "doc"
+}
+
+# Known report modalities
+REPORT_MODALITIES = {
+    "SR",  # Structured Report
+    "DOC",  # Document
+    "SEG",  # Segmentation
+    "RTSTRUCT"  # Radiotherapy Structure Set
 }
 
 # Subspecialty mapping
@@ -578,72 +585,61 @@ def display_studies(studies: List[Dict], page_index: int = 0, page_size: int = 1
     
     console.print(table)
 
-def select_study(studies: List[Dict]) -> Optional[Dict]:
-    """Display paginated studies and handle user selection."""
+def select_study(studies: List[Dict], logger=None) -> Optional[Dict]:
+    """Select a study from the list with pagination."""
     if not studies:
-        logger.warning("No studies available to display")
-        console.print("\n[yellow]No studies with reports were found in this collection.[/yellow]")
+        if logger:
+            logger.warning("No studies available to select from")
         return None
-    
-    page_size = 10
-    page_index = 0
+        
+    if logger:
+        logger.info("Starting study selection")
+        
+    page_size = get_dynamic_page_size(len(studies))
     total_pages = (len(studies) + page_size - 1) // page_size
-    
-    logger.info(f"Starting study selection with {len(studies)} studies across {total_pages} pages")
+    page_index = 0
     
     while True:
         display_studies(studies, page_index, page_size)
         
-        # Calculate valid choices
-        start_idx = page_index * page_size
-        end_idx = min(start_idx + page_size, len(studies))
-        valid_choices = [str(i) for i in range(start_idx + 1, end_idx + 1)]
-        
-        # Add navigation options
-        nav_row = len(valid_choices) + 1
-        
-        if page_index > 0:
-            valid_choices.append(str(nav_row))
-            nav_row += 1
-        
-        if end_idx < len(studies):
-            valid_choices.append(str(nav_row))
-            nav_row += 1
-        
-        valid_choices.append(str(nav_row))
-        
-        choice = Prompt.ask(
-            "Select a case or navigation option (enter number)",
-            choices=valid_choices
-        )
-        
-        choice_num = int(choice)
-        
-        # Handle navigation options
-        if choice_num > end_idx:
-            # Calculate which navigation option was selected
-            nav_option = choice_num - end_idx
+        if logger:
+            logger.debug(f"Displaying page {page_index + 1} of {total_pages}")
             
-            # Previous Page
-            if page_index > 0 and nav_option == 1:
-                page_index -= 1
-                logger.info(f"Navigating to previous page ({page_index + 1} of {total_pages})")
-                continue
-            
-            # Next Page (if available)
-            if end_idx < len(studies) and nav_option == (1 if page_index > 0 else 1):
-                page_index += 1
-                logger.info(f"Navigating to next page ({page_index + 1} of {total_pages})")
-                continue
-            
-            # Cancel
-            logger.info("User cancelled study selection")
+        choice = input("\nSelect a study (number), navigate (n/p), or quit (q): ").strip().lower()
+        
+        if choice == 'q':
+            if logger:
+                logger.info("User chose to quit study selection")
             return None
-        
-        # Return selected study
-        selected_study = studies[choice_num - 1]
-        logger.info(f"Selected case: {selected_study.get('StudyInstanceUID')} for patient {selected_study.get('PatientID')}")
-        return selected_study
+            
+        if choice == 'n':  # next page
+            if page_index < total_pages - 1:
+                page_index += 1
+                if logger:
+                    logger.debug(f"Moving to next page: {page_index + 1}")
+            continue
+            
+        if choice == 'p':  # previous page
+            if page_index > 0:
+                page_index -= 1
+                if logger:
+                    logger.debug(f"Moving to previous page: {page_index + 1}")
+            continue
+            
+        try:
+            index = int(choice) - 1
+            start_idx = page_index * page_size
+            end_idx = min(start_idx + page_size, len(studies))
+            
+            if 0 <= index < (end_idx - start_idx):
+                selected = studies[start_idx + index]
+                if logger:
+                    logger.info(f"Selected study: {selected.get('StudyInstanceUID', 'Unknown UID')}")
+                return selected
+            else:
+                print("Invalid selection. Please try again.")
+        except ValueError:
+            print("Invalid input. Please enter a number, 'n' for next, 'p' for previous, or 'q' to quit.")
 
 def show_live_timer(stop_event: threading.Event) -> None:
     """Show a live timer in the terminal while waiting for an operation."""
@@ -682,11 +678,11 @@ async def filter_patients_with_reports(session: aiohttp.ClientSession, collectio
     return valid_patients
 
 async def check_collection_has_reports(session: aiohttp.ClientSession, collection: str, logger, sample_size: int = 10) -> bool:
-    """Quickly check if a collection is likely to have reports by sampling series directly.
-    Uses /getSeries with Collection and limit to avoid fetching all patients.
-    """
+    """Quickly check if a collection is likely to have reports by sampling series and patients."""
     try:
-        logger.info(f"Checking if collection {collection} has reports (sampling {sample_size} series)")
+        logger.info(f"Checking if collection {collection} has reports (sampling {sample_size} series and patients)")
+        
+        # First check series sample
         url = f"{TCIA_API_BASE}/query/getSeries"
         params = {"Collection": collection, "limit": sample_size}
         
@@ -702,10 +698,64 @@ async def check_collection_has_reports(session: aiohttp.ClientSession, collectio
         
         timer_task = asyncio.create_task(update_timer())
         
+        # Check series sample
         async with session.get(url, params=params, timeout=60) as response:
             response.raise_for_status()
             series_list = await response.json()
         
+        # Log the series we're checking
+        print(f"\nChecking {len(series_list)} series for reports:")
+        for series in series_list:
+            print(f"\nSeries:")
+            print(f"  Description: {series.get('SeriesDescription', 'N/A')}")
+            print(f"  Modality: {series.get('Modality', 'N/A')}")
+            print(f"  Series Number: {series.get('SeriesNumber', 'N/A')}")
+            
+        # Check if any series contains reports
+        if has_report_series(series_list):
+            logger.info(f"Found reports in series sample from collection {collection}")
+            return True
+            
+        # If no reports in series sample, check patient sample
+        print("\nNo reports found in series sample, checking patient sample...")
+        url = f"{TCIA_API_BASE}/query/getPatient"
+        params = {"Collection": collection}
+        
+        async with session.get(url, params=params, timeout=60) as response:
+            response.raise_for_status()
+            patients = await response.json()
+            
+        if not patients:
+            logger.warning(f"No patients found in collection {collection}")
+            return False
+            
+        # Sample patients
+        sample_patients = patients[:sample_size]
+        print(f"\nChecking {len(sample_patients)} patients for reports:")
+        
+        for patient in sample_patients:
+            patient_id = patient["PatientID"]
+            print(f"\nChecking patient: {patient_id}")
+            
+            # Get all series for this patient
+            url = f"{TCIA_API_BASE}/query/getSeries"
+            params = {"Collection": collection, "PatientID": patient_id}
+            
+            async with session.get(url, params=params, timeout=60) as response:
+                response.raise_for_status()
+                patient_series = await response.json()
+                
+            print(f"  Found {len(patient_series)} series")
+            for series in patient_series:
+                print(f"  Series:")
+                print(f"    Description: {series.get('SeriesDescription', 'N/A')}")
+                print(f"    Modality: {series.get('Modality', 'N/A')}")
+                print(f"    Series Number: {series.get('SeriesNumber', 'N/A')}")
+                
+            if has_report_series(patient_series):
+                logger.info(f"Found reports for patient {patient_id} in collection {collection}")
+                return True
+                
         # Cancel the timer task
         timer_task.cancel()
         try:
@@ -717,13 +767,6 @@ async def check_collection_has_reports(session: aiohttp.ClientSession, collectio
         print(f"\rChecking reports for {collection}... completed in {elapsed_time:.2f} seconds")
         console.print("")
         
-        if not series_list:
-            logger.warning(f"No series found in collection {collection}")
-            return False
-        # Check if any series contains reports
-        if has_report_series(series_list):
-            logger.info(f"Found reports in collection {collection}")
-            return True
         logger.warning(f"No reports found in sample from collection {collection}")
         return False
     except Exception as e:
@@ -739,7 +782,22 @@ async def get_studies_for_collection(session: aiohttp.ClientSession, collection:
         return []
     
     # First check if the collection is likely to have reports
-    if not await check_collection_has_reports(session, collection, logger):
+    has_reports = await check_collection_has_reports(session, collection, logger)
+    
+    # Check if this contradicts the cache
+    scan_cache = load_scan_cache()
+    cache_has_reports = False
+    for subspecialty, collections in scan_cache.items():
+        if collection in collections:
+            cache_has_reports = collections[collection].get("has_reports", False)
+            break
+    
+    if has_reports != cache_has_reports:
+        logger.warning(f"Discrepancy detected: cache says collection {collection} {'has' if cache_has_reports else 'does not have'} reports, but check found {'has' if has_reports else 'does not have'} reports")
+        logger.info("Forcing cache refresh to resolve discrepancy")
+        refresh_cache = True
+    
+    if not has_reports:
         logger.warning(f"Collection {collection} appears to have no reports, skipping")
         console.print(f"\n[yellow]Collection {collection} appears to have no reports. Skipping...[/yellow]")
         return []  # Return to main menu instead of exiting
@@ -1241,14 +1299,31 @@ def group_studies_by_patient(studies: List[Dict]) -> Dict[str, List[Dict]]:
     return patient_studies
 
 def has_report_series(series_list: list) -> bool:
-    """Return True if any series in the list appears to be a report (by description or modality)."""
+    """Check if any series in the list is a report."""
+    if not series_list:
+        return False
+        
+    # First check for known report modalities
     for series in series_list:
-        desc = (series.get("SeriesDescription") or "").lower()
-        modality = (series.get("Modality") or "").lower()
-        if any(keyword in desc for keyword in REPORT_KEYWORDS):
+        modality = series.get("Modality", "").upper()
+        description = series.get("SeriesDescription", "").lower()
+        
+        print(f"\nChecking series:")
+        print(f"  Description: {description}")
+        print(f"  Modality: {modality}")
+        
+        # Check for known report modalities
+        if modality in REPORT_MODALITIES:
+            print(f"  ✓ Found report modality: {modality}")
             return True
-        if any(keyword in modality for keyword in REPORT_KEYWORDS):
-            return True
+            
+        # Check for report keywords in description
+        if any(keyword in description for keyword in REPORT_KEYWORDS):
+            # Avoid false positives by checking for imaging terms
+            if not any(term in description for term in ["mr", "ct", "pet", "us", "xr", "scout", "localizer"]):
+                print(f"  ✓ Found report keyword in description")
+                return True
+                
     return False
 
 def load_scan_cache() -> Dict:
@@ -1345,7 +1420,7 @@ async def main():
                         sys.exit(1)
                 
                 # Select study with pagination
-                selected_study = select_study(studies)
+                selected_study = select_study(studies, logger=logger)
                 if not selected_study:
                     logger.info("User cancelled study selection")
                     console.print("\n[yellow]Operation cancelled by user.[/yellow]")
@@ -1410,7 +1485,7 @@ async def main():
                 continue
             
             # Select study with pagination
-            selected_study = select_study(studies)
+            selected_study = select_study(studies, logger=logger)
             if not selected_study:
                 logger.info("User cancelled study selection")
                 console.print("\n[yellow]Returning to collection selection...[/yellow]")
