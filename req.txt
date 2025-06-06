@@ -1,0 +1,9 @@
+pydicom
+Pillow
+openai
+python-dotenv
+tcia_utils
+rich
+python-dotenv
+requests
+questionary
