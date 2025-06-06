@@ -4,7 +4,7 @@
 1. **Core Functionality**
    - TCIA case fetching with `fc.py`
    - Collection scanning with `scanner.py`
-   - Non-IV contrast case handling with `nonivfc.py`
+   - Non-interactive case fetching with `nonivfc.py` for programmatic use
    - Report detection and validation
    - Asynchronous network I/O with `aiohttp`
    - Parallel processing for patient filtering
@@ -80,7 +80,7 @@
 ## Recent Achievements
 1. **Core Features**
    - Added `scanner.py` for collection scanning
-   - Added `nonivfc.py` for non-IV contrast cases
+   - Added `nonivfc.py` as non-interactive version of fc.py
    - Fixed logger issues in `fc.py`
    - Enhanced report detection logic
 

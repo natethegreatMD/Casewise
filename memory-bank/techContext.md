@@ -28,7 +28,7 @@
    ├── scripts/          # Execution scripts
    │   ├── fc.py        # Main case fetcher
    │   ├── scanner.py   # Collection scanner
-   │   └── nonivfc.py   # Non-IV contrast handler
+   │   └── nonivfc.py   # Non-interactive version of fc.py
    ├── utils/           # Utility functions
    ├── cases/           # Case management
    ├── data/            # Data storage

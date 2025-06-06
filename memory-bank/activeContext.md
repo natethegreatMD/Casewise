@@ -9,7 +9,7 @@
 ## Recent Changes
 1. **New Scripts Added**
    - Added `scanner.py` for TCIA collection scanning
-   - Added `nonivfc.py` for non-IV contrast case handling
+   - Added `nonivfc.py` as non-interactive version of fc.py for programmatic use
    - Fixed logger issues in `fc.py`
 
 2. **Performance Optimizations**
