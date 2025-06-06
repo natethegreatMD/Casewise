@@ -261,13 +261,14 @@ def ensure_cache_dir() -> None:
         console.print(f"[red]Error creating cache directory: {e}[/red]")
         raise
 
-def get_cached_studies(collection: str) -> Tuple[List[Dict], Set[str]]:
-    """Load studies from cache if available, returning both studies and seen UIDs."""
+def get_cached_studies(collection, logger=None):
+    """Get cached studies for a collection."""
     cache_file = CACHE_DIR / f"{collection}.jsonl"
     uids_file = CACHE_DIR / f"{collection}.uids.json"
     
     if not cache_file.exists():
-        logger.debug(f"No cache file found for collection {collection}")
+        if logger:
+            logger.debug(f"No cache file found for collection {collection}")
         return [], set()
     
     try:
@@ -279,9 +280,11 @@ def get_cached_studies(collection: str) -> Tuple[List[Dict], Set[str]]:
             try:
                 with open(uids_file, 'r') as f:
                     seen_uids = set(json.load(f))
-                logger.debug(f"Loaded {len(seen_uids)} cached UIDs")
+                if logger:
+                    logger.debug(f"Loaded {len(seen_uids)} cached UIDs")
             except Exception as e:
-                logger.warning(f"Error loading UIDs cache: {e}")
+                if logger:
+                    logger.warning(f"Error loading UIDs cache: {e}")
         
         # Load studies
         with open(cache_file, 'r') as f:
@@ -291,7 +294,8 @@ def get_cached_studies(collection: str) -> Tuple[List[Dict], Set[str]]:
                     studies.append(study)
                     seen_uids.add(study["StudyInstanceUID"])
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Error parsing study from cache: {e}")
+                    if logger:
+                        logger.warning(f"Error parsing study from cache: {e}")
                     continue
         
         # Save updated UIDs
@@ -299,12 +303,15 @@ def get_cached_studies(collection: str) -> Tuple[List[Dict], Set[str]]:
             with open(uids_file, 'w') as f:
                 json.dump(list(seen_uids), f)
         except Exception as e:
-            logger.warning(f"Error saving UIDs cache: {e}")
+            if logger:
+                logger.warning(f"Error saving UIDs cache: {e}")
         
-        logger.info(f"Loaded {len(studies)} cached studies with {len(seen_uids)} unique UIDs")
+        if logger:
+            logger.info(f"Loaded {len(studies)} cached studies with {len(seen_uids)} unique UIDs")
         return studies, seen_uids
     except Exception as e:
-        logger.error(f"Error loading cache for {collection}: {e}")
+        if logger:
+            logger.error(f"Error loading cache for {collection}: {e}")
         return [], set()
 
 def get_dynamic_page_size(total_studies: Optional[int]) -> int:
@@ -383,7 +390,7 @@ def get_collections_sync() -> List[Dict]:
     # Keep the old sync version for CLI bootstrapping if needed
     ...
 
-async def get_collections(session: aiohttp.ClientSession) -> List[Dict]:
+async def get_collections(session: aiohttp.ClientSession, logger) -> List[Dict]:
     try:
         logger.info("Fetching collections from TCIA (async)")
         url = f"{TCIA_API_BASE}/query/getCollectionValues"
@@ -474,46 +481,43 @@ async def get_study_by_uid(session: aiohttp.ClientSession, collection: str, stud
         logger.error(f"Unhandled error while fetching study: {e}")
         return None
 
-def filter_collections_by_subspecialty(collections: List[Dict], subspecialty: Optional[str] = None) -> List[Dict]:
+def filter_collections_by_subspecialty(collections: List[Dict], subspecialty: Optional[str] = None, logger=None) -> List[Dict]:
     """Filter collections based on selected subspecialty."""
-    logger.info(f"Filtering collections for subspecialty: {subspecialty}")
-    
+    if logger:
+        logger.info(f"Filtering collections for subspecialty: {subspecialty}")
     if not subspecialty or subspecialty == "show_all":
-        logger.debug("No subspecialty filter applied, returning all collections")
+        if logger:
+            logger.debug("No subspecialty filter applied, returning all collections")
         return collections
-    
     if subspecialty not in subspecialty_map:
-        logger.warning(f"Unknown subspecialty: {subspecialty}")
-        logger.debug(f"Available subspecialties: {list(subspecialty_map.keys())}")
+        if logger:
+            logger.warning(f"Unknown subspecialty: {subspecialty}")
+            logger.debug(f"Available subspecialties: {list(subspecialty_map.keys())}")
         return collections
-    
-    # Normalize the subspecialty list
     normalized_subspecialty_list = [name.strip().upper() for name in subspecialty_map[subspecialty]]
-    logger.debug(f"Normalized subspecialty list for {subspecialty}: {sorted(normalized_subspecialty_list)}")
-    
-    # Filter collections using normalized names
+    if logger:
+        logger.debug(f"Normalized subspecialty list for {subspecialty}: {sorted(normalized_subspecialty_list)}")
     filtered = [
         collection for collection in collections
         if collection.get("Collection", "").strip().upper() in normalized_subspecialty_list
     ]
-    
-    # Log the normalized collection names from API for debugging
     normalized_api_collections = [c.get("Collection", "").strip().upper() for c in collections]
-    logger.debug(f"Normalized API collections: {sorted(normalized_api_collections)}")
-    
+    if logger:
+        logger.debug(f"Normalized API collections: {sorted(normalized_api_collections)}")
     if not filtered:
-        logger.warning(
-            f"No collections found for subspecialty '{subspecialty}' after normalization. "
-            f"Valid collection names: {sorted(normalized_subspecialty_list)}"
-        )
+        if logger:
+            logger.warning(
+                f"No collections found for subspecialty '{subspecialty}' after normalization. "
+                f"Valid collection names: {sorted(normalized_subspecialty_list)}"
+            )
         console.print(f"[yellow]No collections found for subspecialty '{subspecialty}' after normalization.[/yellow]")
         console.print("[yellow]This might be due to case or whitespace differences in collection names.[/yellow]")
     else:
-        logger.info(
-            f"Filtered collections for {subspecialty}: {len(filtered)} collections found. "
-            f"Matched collections: {[c.get('Collection') for c in filtered]}"
-        )
-    
+        if logger:
+            logger.info(
+                f"Filtered collections for {subspecialty}: {len(filtered)} collections found. "
+                f"Matched collections: {[c.get('Collection') for c in filtered]}"
+            )
     return filtered
 
 def display_studies(studies: List[Dict], page_index: int = 0, page_size: int = 10) -> None:
@@ -741,7 +745,7 @@ async def get_studies_for_collection(session: aiohttp.ClientSession, collection:
         return []  # Return to main menu instead of exiting
     
     # Load existing cache if available
-    all_studies, seen_uids = get_cached_studies(collection)
+    all_studies, seen_uids = get_cached_studies(collection, logger)
     if all_studies:
         logger.info(f"Loaded {len(all_studies)} studies from cache")
     
@@ -1054,26 +1058,20 @@ async def filter_patients_with_reports_batch(session: aiohttp.ClientSession, col
     
     return valid_patients
 
-def display_collections(collections: List[Dict]) -> None:
-    """Display available collections in a table.
-    
-    TODO: Future enhancements:
-    1. Add subject/series-level metadata analysis for better descriptions
-    2. Generate descriptions using GPT based on collection names
-    """
-    logger.debug("Displaying collections table")
+def display_collections(collections: List[Dict], logger=None) -> None:
+    """Display available collections in a table."""
+    if logger:
+        logger.debug("Displaying collections table")
     table = Table(title="Available Collections")
     table.add_column("Index", style="cyan")
     table.add_column("Name", style="green")
     table.add_column("Description", style="yellow")
-    
     for idx, collection in enumerate(collections, 1):
         table.add_row(
             str(idx),
             collection.get("Collection", "N/A"),
             "Description pending"  # TODO: Add GPT-generated descriptions
         )
-    
     console.print(table)
 
 def display_patients(patients: List[Dict]) -> None:
@@ -1093,16 +1091,14 @@ def display_patients(patients: List[Dict]) -> None:
     
     console.print(table)
 
-def select_subspecialty() -> Optional[str]:
+def select_subspecialty(logger) -> Optional[str]:
     """Display subspecialty selection menu and return selected option."""
     while True:
         logger.info("Displaying subspecialty selection menu")
         subspecialties = list(subspecialty_map.keys()) + ["show_all", "exit"]
-        
         table = Table(title="Select Subspecialty")
         table.add_column("Index", style="cyan")
         table.add_column("Option", style="green")
-        
         for idx, subspecialty in enumerate(subspecialties, 1):
             display_name = subspecialty.replace("_", " ").title()
             if subspecialty == "show_all":
@@ -1110,53 +1106,46 @@ def select_subspecialty() -> Optional[str]:
             elif subspecialty == "exit":
                 display_name = "[Exit]"
             table.add_row(str(idx), display_name)
-        
         console.print(table)
-        
         choice = Prompt.ask(
             "Select a subspecialty (enter number)",
             choices=[str(i) for i in range(1, len(subspecialties) + 1)]
         )
-        
         selected = subspecialties[int(choice) - 1]
         if selected == "exit":
             logger.info("User chose to exit program")
             return None
-        
         logger.info(f"Selected subspecialty: {selected}")
         return selected
 
-def select_collection(collections: List[Dict]) -> Optional[Dict]:
+def select_collection(collections: List[Dict], logger=None) -> Optional[Dict]:
     """Display collections and handle user selection."""
     while True:
-        display_collections(collections)
-        
+        display_collections(collections, logger=logger)
         # Add Exit option
         console.print("\n[bold cyan]Additional Options:[/bold cyan]")
         console.print(f"{len(collections) + 1}. [Back to Subspecialty Selection]")
         console.print(f"{len(collections) + 2}. [Exit]")
-        
         choice = Prompt.ask(
             "Select a collection (enter number)",
             choices=[str(i) for i in range(1, len(collections) + 3)]
         )
-        
         choice_num = int(choice)
-        
         # Handle Back option
         if choice_num == len(collections) + 1:
-            logger.info("User chose to go back to subspecialty selection")
+            if logger:
+                logger.info("User chose to go back to subspecialty selection")
             console.print("\n[yellow]Returning to subspecialty selection...[/yellow]")
             return None
-        
         # Handle Exit option
         if choice_num == len(collections) + 2:
-            logger.info("User chose to exit program")
+            if logger:
+                logger.info("User chose to exit program")
             return None
-        
         # Return selected collection
         selected_collection = collections[choice_num - 1]
-        logger.info(f"Selected collection: {selected_collection.get('Collection')}")
+        if logger:
+            logger.info(f"Selected collection: {selected_collection.get('Collection')}")
         return selected_collection
 
 def download_case(collection: str, study: Dict) -> bool:
@@ -1366,7 +1355,7 @@ async def main():
         while True:
             # Select subspecialty
             console.print("\n[bold blue]Select a subspecialty to filter collections:[/bold blue]")
-            selected_subspecialty = select_subspecialty()
+            selected_subspecialty = select_subspecialty(logger)
             if selected_subspecialty is None:
                 logger.info("User chose to exit program")
                 console.print("\n[yellow]Exiting program...[/yellow]")
@@ -1374,8 +1363,8 @@ async def main():
             
             # Fetch and display collections
             console.print("[bold blue]Fetching available collections...[/bold blue]")
-            collections = await get_collections(session)
-            filtered_collections = filter_collections_by_subspecialty(collections, selected_subspecialty)
+            collections = await get_collections(session, logger)
+            filtered_collections = filter_collections_by_subspecialty(collections, selected_subspecialty, logger=logger)
             
             if not filtered_collections:
                 logger.warning(f"No collections found for subspecialty: {selected_subspecialty}")
@@ -1383,7 +1372,7 @@ async def main():
                 continue
             
             # Select collection
-            selected_collection = select_collection(filtered_collections)
+            selected_collection = select_collection(filtered_collections, logger=logger)
             if selected_collection is None:
                 continue
             
