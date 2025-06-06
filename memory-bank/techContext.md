@@ -7,6 +7,7 @@
    - Markdown for documentation
    - aiohttp for async I/O
    - Rich for terminal UI
+   - TCIA API integration
 
 2. **Development Tools**
    - Git for version control
@@ -19,11 +20,15 @@
    - Git
    - Text editor/IDE
    - Terminal/PowerShell
+   - TCIA API access
 
 2. **Project Structure**
    ```
    casewise/
    ├── scripts/          # Execution scripts
+   │   ├── fc.py        # Main case fetcher
+   │   ├── scanner.py   # Collection scanner
+   │   └── nonivfc.py   # Non-IV contrast handler
    ├── utils/           # Utility functions
    ├── cases/           # Case management
    ├── data/            # Data storage
@@ -63,6 +68,7 @@
    - Python 3.11.4
    - Sufficient disk space
    - Adequate memory (1GB+ recommended)
+   - TCIA API access
 
 2. **Performance Requirements**
    - Asynchronous I/O operations
@@ -71,6 +77,7 @@
    - Real-time feedback
    - Quick response times
    - Reliable operation
+   - Efficient report detection
 
 ## Development Guidelines
 1. **Code Style**

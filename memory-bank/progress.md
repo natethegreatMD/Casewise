@@ -1,7 +1,11 @@
 # Progress Tracking
 
 ## What Works
-1. **Performance Optimizations**
+1. **Core Functionality**
+   - TCIA case fetching with `fc.py`
+   - Collection scanning with `scanner.py`
+   - Non-IV contrast case handling with `nonivfc.py`
+   - Report detection and validation
    - Asynchronous network I/O with `aiohttp`
    - Parallel processing for patient filtering
    - Memory management improvements
@@ -12,23 +16,27 @@
    - Real-time progress feedback
    - User-friendly prompts
    - Report checking functionality
+   - Enhanced report detection logic
 
 3. **Project Structure**
    - Directory organization
    - Core folders created
    - Documentation system
    - Dependency management with `req.txt`
+   - Comprehensive logging system
 
 ## In Progress
 1. **Performance Testing**
    - Memory usage monitoring
    - Response time optimization
    - Resource utilization tracking
+   - Report detection accuracy improvements
 
 2. **User Experience**
    - Feedback collection
    - Interface improvements
    - Error handling refinement
+   - Report detection logic enhancement
 
 ## To Be Built
 1. **Core Features**
@@ -70,18 +78,25 @@
    - Production readiness
 
 ## Recent Achievements
-1. **Performance**
+1. **Core Features**
+   - Added `scanner.py` for collection scanning
+   - Added `nonivfc.py` for non-IV contrast cases
+   - Fixed logger issues in `fc.py`
+   - Enhanced report detection logic
+
+2. **Performance**
    - Implemented async I/O
    - Added parallel processing
    - Enhanced memory management
    - Added live timer display
 
-2. **User Experience**
+3. **User Experience**
    - Added interactive prompts
    - Improved feedback system
    - Enhanced error handling
+   - Better report detection feedback
 
-3. **Project Management**
+4. **Project Management**
    - Updated dependency management
    - Improved documentation
    - Enhanced code organization 

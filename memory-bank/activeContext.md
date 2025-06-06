@@ -1,29 +1,37 @@
 # Active Context
 
 ## Current Focus
+- TCIA case fetching and management
+- Report detection and handling
 - Performance optimizations
 - User experience improvements
-- Dependency management
 
 ## Recent Changes
-1. **Performance Optimizations**
+1. **New Scripts Added**
+   - Added `scanner.py` for TCIA collection scanning
+   - Added `nonivfc.py` for non-IV contrast case handling
+   - Fixed logger issues in `fc.py`
+
+2. **Performance Optimizations**
    - Implemented asynchronous network I/O using `aiohttp`
    - Added parallel processing for patient filtering
    - Enhanced memory management with monitoring and garbage collection
    - Implemented live timer display during report checks
 
-2. **User Experience**
+3. **User Experience**
    - Added prompt to return to main menu or quit when no cases are found
    - Improved feedback during report checks
+   - Enhanced report detection logic
 
-3. **Dependency Management**
+4. **Dependency Management**
    - Updated project to use `req.txt` for dependencies
 
 ## Active Decisions
 1. **Architecture**
-   - Modular design
-   - File-based storage
-   - Python-based implementation
+   - Modular design with separate scripts for different functionalities
+   - File-based storage with caching
+   - Python-based implementation with async support
+   - Comprehensive logging system
 
 2. **Development**
    - Local development first
@@ -32,14 +40,15 @@
 
 ## Next Steps
 1. **Immediate Tasks**
-   - Test performance optimizations
-   - Gather user feedback
-   - Document changes
+   - Test new scripts and report detection logic
+   - Gather user feedback on new functionality
+   - Document new features and changes
 
 2. **Short-term Goals**
    - Implement additional performance improvements
    - Set up testing framework
    - Create basic utilities
+   - Enhance report detection accuracy
 
 ## Current Considerations
 1. **Technical**
