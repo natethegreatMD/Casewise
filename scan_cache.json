@@ -1,0 +1,107 @@
+{
+  "cardiothoracic": {
+    "LIDC-IDRI": {
+      "has_reports": false
+    }
+  },
+  "neuroradiology": {
+    "TCGA-GBM": {
+      "has_reports": false
+    },
+    "UPENN-GBM": {
+      "has_reports": false
+    },
+    "ICDC-Glioma": {
+      "has_reports": true
+    },
+    "Vestibular-Schwannoma-SEG": {
+      "has_reports": false
+    },
+    "Vestibular-Schwannoma-MC-RC": {
+      "has_reports": false
+    },
+    "MIDRC-RICORD-1A": {
+      "has_reports": true
+    },
+    "MIDRC-RICORD-1B": {
+      "has_reports": false
+    },
+    "MIDRC-RICORD-1C": {
+      "has_reports": false
+    },
+    "RIDER PHANTOM MRI": {
+      "has_reports": false
+    },
+    "RIDER Pilot": {
+      "has_reports": true
+    },
+    "CMMD": {
+      "has_reports": false
+    },
+    "GBM-DSC-MRI-DRO": {
+      "has_reports": false
+    },
+    "ISPY2": {
+      "has_reports": true
+    },
+    "NBIA Pediatric Brain": {
+      "has_reports": false
+    },
+    "Childhood Brain Tumor Network": {
+      "has_reports": false
+    },
+    "NBIATestData": {
+      "has_reports": false
+    },
+    "MDACC-NIH-CDF-FAIRCHANCE": {
+      "has_reports": false
+    }
+  },
+  "breast": {
+    "TCGA-BRCA": {
+      "has_reports": true
+    },
+    "CBIS-DDSM": {
+      "has_reports": false
+    },
+    "Breast-Diagnosis": {
+      "has_reports": true
+    },
+    "Breast-MRI-NACT-Pilot": {
+      "has_reports": true
+    },
+    "ACRIN-6698": {
+      "has_reports": false
+    },
+    "ACRIN-Contralateral-Breast-MR": {
+      "has_reports": true
+    },
+    "Advanced-MRI-Breast-Lesions": {
+      "has_reports": false
+    },
+    "Duke-Breast-Cancer-MRI": {
+      "has_reports": true
+    },
+    "Breast-Cancer-Screening-DBT": {
+      "has_reports": false
+    },
+    "QIN-BREAST": {
+      "has_reports": false
+    },
+    "QIN Breast DCE-MRI": {
+      "has_reports": false
+    },
+    "ISPY1": {
+      "has_reports": true
+    },
+    "RIDER Breast MRI": {
+      "has_reports": false
+    },
+    "ACRIN-FLT-Breast": {
+      "has_reports": false
+    },
+    "CMB-BRCA": {
+      "has_reports": true
+    }
+  }
+}

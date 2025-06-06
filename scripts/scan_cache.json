@@ -1,0 +1,495 @@
+{
+  "neuroradiology": {
+    "TCGA-GBM": {
+      "has_reports": false
+    },
+    "UPENN-GBM": {
+      "has_reports": false
+    },
+    "ICDC-Glioma": {
+      "has_reports": false
+    },
+    "Vestibular-Schwannoma-SEG": {
+      "has_reports": false
+    },
+    "Vestibular-Schwannoma-MC-RC": {
+      "has_reports": false
+    },
+    "MIDRC-RICORD-1A": {
+      "has_reports": false
+    },
+    "MIDRC-RICORD-1B": {
+      "has_reports": false
+    },
+    "MIDRC-RICORD-1C": {
+      "has_reports": false
+    },
+    "RIDER PHANTOM MRI": {
+      "has_reports": false
+    },
+    "RIDER Pilot": {
+      "has_reports": false
+    },
+    "CMMD": {
+      "has_reports": false
+    },
+    "GBM-DSC-MRI-DRO": {
+      "has_reports": false
+    },
+    "ISPY2": {
+      "has_reports": false
+    },
+    "NBIA Pediatric Brain": {
+      "has_reports": false
+    },
+    "Childhood Brain Tumor Network": {
+      "has_reports": false
+    },
+    "NBIATestData": {
+      "has_reports": false
+    },
+    "MDACC-NIH-CDF-FAIRCHANCE": {
+      "has_reports": false
+    }
+  },
+  "breast": {
+    "TCGA-BRCA": {
+      "has_reports": false
+    },
+    "CBIS-DDSM": {
+      "has_reports": false
+    },
+    "Breast-Diagnosis": {
+      "has_reports": false
+    },
+    "Breast-MRI-NACT-Pilot": {
+      "has_reports": false
+    },
+    "ACRIN-6698": {
+      "has_reports": false
+    },
+    "ACRIN-Contralateral-Breast-MR": {
+      "has_reports": false
+    },
+    "Advanced-MRI-Breast-Lesions": {
+      "has_reports": false
+    },
+    "Duke-Breast-Cancer-MRI": {
+      "has_reports": false
+    },
+    "Breast-Cancer-Screening-DBT": {
+      "has_reports": false
+    },
+    "QIN-BREAST": {
+      "has_reports": false
+    },
+    "QIN Breast DCE-MRI": {
+      "has_reports": false
+    },
+    "ISPY1": {
+      "has_reports": false
+    },
+    "RIDER Breast MRI": {
+      "has_reports": false
+    },
+    "ACRIN-FLT-Breast": {
+      "has_reports": false
+    },
+    "CMB-BRCA": {
+      "has_reports": false
+    }
+  },
+  "msk": {
+    "TCGA-SARC": {
+      "has_reports": false
+    },
+    "Soft-tissue-Sarcoma": {
+      "has_reports": false
+    },
+    "CPTAC-SAR": {
+      "has_reports": false
+    },
+    "Spine-Mets-CT-SEG": {
+      "has_reports": false
+    },
+    "CPTAC-CCRCC": {
+      "has_reports": false
+    },
+    "Pelvic-Reference-Data": {
+      "has_reports": false
+    },
+    "Prostate-Anatomical-Edge-Cases": {
+      "has_reports": false
+    }
+  },
+  "cardiothoracic": {
+    "LIDC-IDRI": {
+      "has_reports": false
+    },
+    "RIDER Lung CT": {
+      "has_reports": false
+    },
+    "RIDER Lung PET-CT": {
+      "has_reports": false
+    },
+    "QIN LUNG CT": {
+      "has_reports": false
+    },
+    "LungCT-Diagnosis": {
+      "has_reports": false
+    },
+    "Lung-PET-CT-Dx": {
+      "has_reports": false
+    },
+    "Anti-PD-1_Lung": {
+      "has_reports": false
+    },
+    "NSCLC Radiogenomics": {
+      "has_reports": false
+    },
+    "NSCLC-Radiomics": {
+      "has_reports": false
+    },
+    "NSCLC-Radiomics-Genomics": {
+      "has_reports": false
+    },
+    "NSCLC-Radiomics-Interobserver1": {
+      "has_reports": false
+    },
+    "APOLLO-5-LUAD": {
+      "has_reports": false
+    },
+    "APOLLO-5-THYM": {
+      "has_reports": false
+    },
+    "APOLLO-5-LUNG-MISC": {
+      "has_reports": false
+    },
+    "TCGA-LUAD": {
+      "has_reports": false
+    },
+    "TCGA-LUSC": {
+      "has_reports": false
+    },
+    "CPTAC-LSCC": {
+      "has_reports": false
+    },
+    "CPTAC-LUAD": {
+      "has_reports": false
+    },
+    "APOLLO-5-LSCC": {
+      "has_reports": false
+    },
+    "Lung Phantom": {
+      "has_reports": false
+    },
+    "Lung-Fused-CT-Pathology": {
+      "has_reports": false
+    },
+    "SPIE-AAPM Lung CT Challenge": {
+      "has_reports": false
+    },
+    "COVID-19-AR": {
+      "has_reports": false
+    },
+    "COVID-19-NY-SBU": {
+      "has_reports": false
+    },
+    "covid-19": {
+      "has_reports": false
+    },
+    "CT4Harmonization-Multicentric": {
+      "has_reports": false
+    }
+  },
+  "abdominal": {
+    "TCGA-COAD": {
+      "has_reports": false
+    },
+    "TCGA-LIHC": {
+      "has_reports": false
+    },
+    "TCGA-KIRC": {
+      "has_reports": false
+    },
+    "TCGA-KIRP": {
+      "has_reports": false
+    },
+    "TCGA-KICH": {
+      "has_reports": false
+    },
+    "TCGA-PAAD": {
+      "has_reports": false
+    },
+    "Pancreas-CT": {
+      "has_reports": false
+    },
+    "Pancreatic-CT-CBCT-SEG": {
+      "has_reports": false
+    },
+    "CT COLONOGRAPHY": {
+      "has_reports": false
+    },
+    "CT Lymph Nodes": {
+      "has_reports": false
+    },
+    "StageII-Colorectal-CT": {
+      "has_reports": false
+    },
+    "Colorectal-Liver-Metastases": {
+      "has_reports": false
+    },
+    "CTpred-Sunitinib-panNET": {
+      "has_reports": false
+    },
+    "CPTAC-LIHC": {
+      "has_reports": false
+    },
+    "CPTAC-CHOL": {
+      "has_reports": false
+    },
+    "PDMR-Texture-Analysis": {
+      "has_reports": false
+    },
+    "HCC-TACE-Seg": {
+      "has_reports": false
+    },
+    "C4KC-KiTS": {
+      "has_reports": false
+    },
+    "Adrenal-ACC-Ki67-Seg": {
+      "has_reports": false
+    },
+    "TCGA-ESCA": {
+      "has_reports": false
+    },
+    "APOLLO-5-ESCA": {
+      "has_reports": false
+    },
+    "APOLLO-5-PAAD": {
+      "has_reports": false
+    },
+    "CPTAC-PDA": {
+      "has_reports": false
+    },
+    "QIBA-CT-Liver-Phantom": {
+      "has_reports": false
+    },
+    "B-mode-and-CEUS-Liver": {
+      "has_reports": false
+    },
+    "CC-Tumor-Heterogeneity": {
+      "has_reports": false
+    },
+    "Mediastinal-Lymph-Node-SEG": {
+      "has_reports": false
+    },
+    "LCTSC": {
+      "has_reports": false
+    }
+  },
+  "nuclear": {
+    "ACRIN-NSCLC-FDG-PET": {
+      "has_reports": false
+    },
+    "FDG-PET-CT-Lesions": {
+      "has_reports": false
+    },
+    "QIN PET Phantom": {
+      "has_reports": false
+    },
+    "RIDER PHANTOM PET-CT": {
+      "has_reports": false
+    },
+    "NaF PROSTATE": {
+      "has_reports": false
+    },
+    "CT-vs-PET-Ventilation-Imaging": {
+      "has_reports": false
+    },
+    "QIBA CT-1C": {
+      "has_reports": false
+    }
+  },
+  "pediatric": {
+    "Pediatric-CT-SEG": {
+      "has_reports": false
+    },
+    "NBIA Pediatric Brain": {
+      "has_reports": false
+    },
+    "Childhood Brain Tumor Network": {
+      "has_reports": false
+    },
+    "CPTAC-Pediatric": {
+      "has_reports": false
+    }
+  },
+  "other": {
+    "CC-Radiomics-Phantom": {
+      "has_reports": false
+    },
+    "CC-Radiomics-Phantom-2": {
+      "has_reports": false
+    },
+    "CC-Radiomics-Phantom-3": {
+      "has_reports": false
+    },
+    "Phantom FDA": {
+      "has_reports": false
+    },
+    "CT-Phantom4Radiomics": {
+      "has_reports": false
+    },
+    "PROSTATE-DIAGNOSIS": {
+      "has_reports": false
+    },
+    "PROSTATE-MRI": {
+      "has_reports": false
+    },
+    "PROSTATEx": {
+      "has_reports": false
+    },
+    "Prostate Fused-MRI-Pathology": {
+      "has_reports": false
+    },
+    "Prostate-3T": {
+      "has_reports": false
+    },
+    "Prostate-MRI-US-Biopsy": {
+      "has_reports": false
+    },
+    "QIN-PROSTATE-Repeatability": {
+      "has_reports": false
+    },
+    "CMB-PCA": {
+      "has_reports": false
+    },
+    "TCGA-BLCA": {
+      "has_reports": false
+    },
+    "TCGA-CESC": {
+      "has_reports": false
+    },
+    "TCGA-OV": {
+      "has_reports": false
+    },
+    "TCGA-PRAD": {
+      "has_reports": false
+    },
+    "TCGA-READ": {
+      "has_reports": false
+    },
+    "TCGA-STAD": {
+      "has_reports": false
+    },
+    "TCGA-THCA": {
+      "has_reports": false
+    },
+    "TCGA-UCEC": {
+      "has_reports": false
+    },
+    "CPTAC-UCEC": {
+      "has_reports": false
+    },
+    "CPTAC-CM": {
+      "has_reports": false
+    },
+    "CPTAC-CESC": {
+      "has_reports": false
+    },
+    "CPTAC-STAD": {
+      "has_reports": false
+    },
+    "CPTAC-AML": {
+      "has_reports": false
+    },
+    "CMB-MEL": {
+      "has_reports": false
+    },
+    "CMB-MML": {
+      "has_reports": false
+    },
+    "CMB-LCA": {
+      "has_reports": false
+    },
+    "CMB-CRC": {
+      "has_reports": false
+    },
+    "CMB-GEC": {
+      "has_reports": false
+    },
+    "CMB-AML": {
+      "has_reports": false
+    },
+    "CMB-OV": {
+      "has_reports": false
+    },
+    "PDMR-292921-168-R": {
+      "has_reports": false
+    },
+    "PDMR-BL0293-F563": {
+      "has_reports": false
+    },
+    "PDMR-425362-245-T": {
+      "has_reports": false
+    },
+    "PDMR-997537-175-T": {
+      "has_reports": false
+    },
+    "PDMR-833975-119-R": {
+      "has_reports": false
+    },
+    "PDMR-521955-158-R4": {
+      "has_reports": false
+    },
+    "EA1141": {
+      "has_reports": false
+    },
+    "ReMIND": {
+      "has_reports": false
+    },
+    "VAREPOP-APOLLO": {
+      "has_reports": false
+    },
+    "MIDI-B-Synthetic-Test": {
+      "has_reports": false
+    },
+    "MIDI-B-Synthetic-Validation": {
+      "has_reports": false
+    },
+    "MIDI-B-Curated-Test": {
+      "has_reports": false
+    },
+    "MIDI-B-Curated-Validation": {
+      "has_reports": false
+    },
+    "Training-Pseudo": {
+      "has_reports": false
+    },
+    "Pseudo-PHI-DICOM-Data": {
+      "has_reports": false
+    },
+    "DRO-Toolkit": {
+      "has_reports": false
+    },
+    "Mouse-Astrocytoma": {
+      "has_reports": false
+    },
+    "Mouse-Mammary": {
+      "has_reports": false
+    },
+    "MRI-DIR": {
+      "has_reports": false
+    },
+    "VICTRE": {
+      "has_reports": false
+    },
+    "4D-Lung": {
+      "has_reports": false
+    },
+    "APOLLO": {
+      "has_reports": false
+    }
+  }
+}
