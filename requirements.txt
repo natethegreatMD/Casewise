@@ -2,3 +2,4 @@ pydicom
 Pillow
 openai
 python-dotenv
+aiohttp==3.9.3
