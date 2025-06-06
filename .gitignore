@@ -209,6 +209,3 @@ speech_input/transcripts/
 
 # Secret keys
 .env
-
-# Memory bank (optional, depends on if you commit it)
-memory-bank/
