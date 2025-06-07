@@ -28,19 +28,9 @@ API_RATE_LIMIT_DELAY = 0.2  # Delay between API calls in seconds
 REQUEST_TIMEOUT = 450  # Increased timeout for all collections
 MAX_RETRIES = 3  # Number of retries for failed requests
 
-# Report-related keywords to check in series
-REPORT_KEYWORDS = {
-    "report",
-    "rtstruct",
-    "sc",  # Secondary Capture
-    "doc",
-    "annotation",
-    "segmentation",
-    "measurement",
-    "findings",
-    "impression",
-    "diagnosis"
-}
+# Constants for report detection
+REPORT_MODALITIES = {"SR", "DOC", "RTSTRUCT"}  # Known report modalities
+REPORT_KEYWORDS = {"report", "rtstruct", "doc"}  # Keywords that might indicate a report
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
@@ -137,25 +127,31 @@ async def get_series(session: aiohttp.ClientSession, patient_id: str, collection
         return []
 
 def has_report_series(series_list: list, logger: logging.Logger) -> bool:
-    """Check if any series in the list appears to be a report."""
+    """Check if any series in the list is a report."""
+    if not series_list:
+        return False
+        
+    # First check for known report modalities
     for series in series_list:
-        series_desc = series.get("SeriesDescription", "").lower()
-        modality = series.get("Modality", "").lower()
-        series_number = series.get("SeriesNumber", "")
+        modality = series.get("Modality", "").upper()
+        description = series.get("SeriesDescription", "").lower()
         
-        # Log series details for debugging
-        logger.debug(f"Checking series: {series_desc} (Modality: {modality}, Number: {series_number})")
+        logger.debug(f"\nChecking series:")
+        logger.debug(f"  Description: {description}")
+        logger.debug(f"  Modality: {modality}")
         
-        # Check if series description contains report keywords
-        if any(keyword in series_desc for keyword in REPORT_KEYWORDS):
-            logger.info(f"Found report keyword in series: {series_desc}")
+        # Check for known report modalities
+        if modality in REPORT_MODALITIES:
+            logger.info(f"  ✓ Found report modality: {modality}")
             return True
             
-        # Check if modality indicates a report
-        if modality in ["SR", "DOC", "SEG", "RTSTRUCT"]:
-            logger.info(f"Found report modality: {modality}")
-            return True
-            
+        # Check for report keywords in description
+        if any(keyword in description for keyword in REPORT_KEYWORDS):
+            # Avoid false positives by checking for imaging terms
+            if not any(term in description for term in ["mr", "ct", "pet", "us", "xr", "scout", "localizer"]):
+                logger.info(f"  ✓ Found report keyword in description")
+                return True
+                
     return False
 
 async def check_collection_has_reports(session: aiohttp.ClientSession, collection: str, logger, sample_size: int = 20) -> bool:
